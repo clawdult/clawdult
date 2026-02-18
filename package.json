@@ -29,8 +29,16 @@
     "claude",
     "codex"
   ],
-  "author": "",
+  "author": "swpg",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/swpg/clawdult.git"
+  },
+  "homepage": "https://github.com/swpg/clawdult",
+  "bugs": {
+    "url": "https://github.com/swpg/clawdult/issues"
+  },
   "dependencies": {
     "@aws-sdk/client-budgets": "^3.700.0",
     "@aws-sdk/client-ec2": "^3.700.0",

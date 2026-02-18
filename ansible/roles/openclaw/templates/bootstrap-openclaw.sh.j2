@@ -1,0 +1,365 @@
+#!/bin/bash
+# OpenClaw Bootstrap Script
+# Runs on instance first-boot to configure OpenClaw with secrets from SSM
+
+set -euo pipefail
+
+CLAWDULT_BASE="{{ clawdult_base_dir }}"
+SECRETS_DIR="${CLAWDULT_BASE}/secrets"
+OPENCLAW_DIR="${CLAWDULT_BASE}/openclaw"
+OPENCLAW_CONFIG="${OPENCLAW_DIR}/openclaw.json"
+LOG_FILE="${CLAWDULT_BASE}/logs/bootstrap-openclaw.log"
+
+cleanup() {
+    # Remove one-time-use secrets regardless of success/failure
+    rm -f "${SECRETS_DIR}/claude-setup-token"
+}
+trap cleanup EXIT
+
+log() {
+    echo "[$(date -Iseconds)] $*" | tee -a "$LOG_FILE"
+}
+
+error() {
+    log "ERROR: $*"
+    exit 1
+}
+
+# IMDSv2 token for all metadata requests
+IMDS_TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+
+imds_get() {
+    curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" "http://169.254.169.254/latest/meta-data/$1"
+}
+
+# Get instance metadata
+get_agent_name() {
+    # Read from instance metadata tags (requires InstanceMetadataTags: enabled)
+    # Tags can take ~30s to propagate after launch; retry up to ~60s
+    local agent_name
+    local attempt
+    for attempt in $(seq 1 10); do
+        # || true: tags take ~30s to propagate; 404 is expected during early retries
+        agent_name=$(imds_get "tags/instance/clawdult:agent" 2>/dev/null || true)
+
+        if [[ -n "$agent_name" && "$agent_name" != "None" ]]; then
+            echo "$agent_name"
+            return 0
+        fi
+
+        local delay=$(( attempt < 3 ? attempt * 2 : 10 ))
+        log "Waiting for instance tags (attempt ${attempt}/10, next retry in ${delay}s)..."
+        sleep "$delay"
+    done
+
+    error "Failed to read agent name from instance metadata tags after 10 attempts"
+}
+
+# Fetch a secret from SSM Parameter Store
+# Returns 0 if parameter was found and written, 1 if parameter does not exist.
+# Fails hard on unexpected AWS errors (auth, network, etc.).
+fetch_ssm_secret() {
+    local param_name="$1"
+    local output_file="$2"
+
+    log "Fetching SSM parameter: $param_name"
+
+    local value
+    local rc=0
+    value=$(aws ssm get-parameter \
+        --name "$param_name" \
+        --with-decryption \
+        --query 'Parameter.Value' \
+        --output text 2>&1) || rc=$?
+
+    if [[ "$rc" -ne 0 ]]; then
+        if echo "$value" | grep -q "ParameterNotFound"; then
+            log "  -> Parameter not found"
+            return 1
+        fi
+        log "  -> ERROR: Failed to fetch parameter: $value"
+        return "$rc"
+    fi
+
+    if [[ -n "$value" && "$value" != "None" ]]; then
+        echo -n "$value" > "$output_file"
+        chmod 600 "$output_file"
+        log "  -> Written to $output_file"
+        return 0
+    else
+        log "  -> Parameter empty"
+        return 1
+    fi
+}
+
+# Main bootstrap sequence
+main() {
+    log "Starting OpenClaw bootstrap..."
+
+    AGENT_NAME=$(get_agent_name)
+    log "Agent name: $AGENT_NAME"
+
+    REGION=$(imds_get "placement/region")
+    log "Region: $REGION"
+
+    export AWS_DEFAULT_REGION="$REGION"
+
+    # Fetch secrets from SSM
+    # All secrets are optional -- not every agent has every key configured.
+    # || true prevents set -e from killing the script when a parameter is missing.
+    # fetch_ssm_secret now logs ERROR for real AWS failures vs "not found" for missing params.
+    log "Fetching secrets from SSM..."
+
+    # Core secrets
+    fetch_ssm_secret "/clawdult/${AGENT_NAME}/anthropic-api-key" "${SECRETS_DIR}/anthropic-api-key" || true
+    fetch_ssm_secret "/clawdult/${AGENT_NAME}/openai-api-key" "${SECRETS_DIR}/openai-api-key" || true
+    fetch_ssm_secret "/clawdult/${AGENT_NAME}/tailscale-auth-key" "${SECRETS_DIR}/tailscale-auth-key" || true
+
+    # OpenClaw config and gateway token
+    fetch_ssm_secret "/clawdult/${AGENT_NAME}/openclaw-config" "${SECRETS_DIR}/openclaw-config.json" || true
+    fetch_ssm_secret "/clawdult/${AGENT_NAME}/openclaw-token" "${SECRETS_DIR}/openclaw-token" || true
+
+    # Claude setup token (for subscription auth)
+    fetch_ssm_secret "/clawdult/${AGENT_NAME}/claude-setup-token" "${SECRETS_DIR}/claude-setup-token" || true
+
+    # Messaging tokens
+    fetch_ssm_secret "/clawdult/${AGENT_NAME}/telegram-bot-token" "${SECRETS_DIR}/telegram-bot-token" || true
+    fetch_ssm_secret "/clawdult/${AGENT_NAME}/slack-oauth" "${SECRETS_DIR}/slack-oauth" || true
+    fetch_ssm_secret "/clawdult/${AGENT_NAME}/discord-oauth" "${SECRETS_DIR}/discord-oauth" || true
+    fetch_ssm_secret "/clawdult/${AGENT_NAME}/googlechat-token" "${SECRETS_DIR}/googlechat-token" || true
+    fetch_ssm_secret "/clawdult/${AGENT_NAME}/teams-token" "${SECRETS_DIR}/teams-token" || true
+    fetch_ssm_secret "/clawdult/${AGENT_NAME}/matrix-token" "${SECRETS_DIR}/matrix-token" || true
+    fetch_ssm_secret "/clawdult/${AGENT_NAME}/webchat-token" "${SECRETS_DIR}/webchat-token" || true
+    fetch_ssm_secret "/clawdult/${AGENT_NAME}/bluebubbles-token" "${SECRETS_DIR}/bluebubbles-token" || true
+    fetch_ssm_secret "/clawdult/${AGENT_NAME}/zalo-token" "${SECRETS_DIR}/zalo-token" || true
+
+    # GitHub credentials
+    fetch_ssm_secret "/clawdult/${AGENT_NAME}/github-token" "${SECRETS_DIR}/github-token" || true
+    fetch_ssm_secret "/clawdult/${AGENT_NAME}/github-username" "${SECRETS_DIR}/github-username" || true
+    fetch_ssm_secret "/clawdult/${AGENT_NAME}/github-email" "${SECRETS_DIR}/github-email" || true
+
+    # Authenticate Tailscale if auth key present
+    if [[ -f "${SECRETS_DIR}/tailscale-auth-key" ]]; then
+        log "Authenticating Tailscale..."
+        if ! "${CLAWDULT_BASE}/bin/tailscale-auth" "$AGENT_NAME"; then
+            log "WARNING: Tailscale authentication FAILED"
+            log "WARNING: Instance will not be reachable via Tailscale"
+            log "WARNING: Check auth key validity and Tailscale ACLs"
+        fi
+    else
+        log "No Tailscale auth key found, skipping"
+    fi
+
+    # Configure GitHub CLI if credentials present
+    if [[ -x "${CLAWDULT_BASE}/bin/bootstrap-github" ]]; then
+        log "Running GitHub bootstrap..."
+        "${CLAWDULT_BASE}/bin/bootstrap-github" || log "GitHub bootstrap failed (non-fatal)"
+    fi
+
+    # Generate OpenClaw config from SSM config + secrets
+    log "Generating OpenClaw configuration..."
+    generate_openclaw_config
+
+    # Configure OpenClaw with Claude subscription if setup token present
+    if [[ -f "${SECRETS_DIR}/claude-setup-token" ]]; then
+        log "Configuring OpenClaw with Claude subscription..."
+        if sudo -u ubuntu openclaw models auth paste-token --provider anthropic < "${SECRETS_DIR}/claude-setup-token"; then
+            log "Claude subscription configured successfully"
+        else
+            log "WARNING: Failed to configure Claude subscription"
+        fi
+    fi
+
+    # Decide whether to start OpenClaw service based on model or channels config
+    local should_start_openclaw="false"
+    if [[ -f "${SECRETS_DIR}/openclaw-config.json" ]]; then
+        local has_model
+        has_model=$(jq -r '.model // ""' "${SECRETS_DIR}/openclaw-config.json")
+
+        local has_channels
+        has_channels=$(jq -r '[.channels // {} | to_entries[] | select(.value == true)] | length' "${SECRETS_DIR}/openclaw-config.json")
+
+        if [[ -n "$has_model" && "$has_model" != "null" ]] || [[ "$has_channels" -gt 0 ]]; then
+            should_start_openclaw="true"
+        fi
+    fi
+
+    if [[ "$should_start_openclaw" == "true" ]]; then
+        log "Starting OpenClaw service (model or channels configured)..."
+        systemctl start openclaw || log "OpenClaw start failed (non-fatal)"
+
+        # Configure gateway proxy if specified in openclaw config
+        local gateway_mode=""
+        if [[ -f "${SECRETS_DIR}/openclaw-config.json" ]]; then
+            gateway_mode=$(jq -r '.gateway.mode // ""' "${SECRETS_DIR}/openclaw-config.json")
+        fi
+        configure_gateway "$gateway_mode"
+    else
+        log "No OpenClaw model or channels configured, skipping service start"
+    fi
+
+    log "OpenClaw bootstrap complete"
+
+    # Signal readiness before non-critical npm updates (which can take 3-6 minutes)
+    touch "${CLAWDULT_BASE}/.ready"
+    log "Readiness marker created"
+
+    # Update CLI tools to latest versions (non-critical, run after bootstrap)
+    log "Updating OpenClaw to latest version..."
+    if npm install -g openclaw@latest 2>&1 | tee -a "$LOG_FILE"; then
+        log "OpenClaw updated to $(openclaw --version 2>/dev/null || echo 'unknown')"
+    else
+        log "WARNING: OpenClaw update failed, using AMI-baked version"
+    fi
+
+    log "Updating Claude Code CLI to latest version..."
+    if sudo -u ubuntu npm install -g @anthropic-ai/claude-code@latest 2>&1 | tee -a "$LOG_FILE"; then
+        log "Claude Code updated to $(sudo -u ubuntu claude --version 2>/dev/null || echo 'unknown')"
+    else
+        log "WARNING: Claude Code update failed, using AMI-baked version"
+    fi
+
+    log "Updating Codex CLI to latest version..."
+    if sudo -u ubuntu npm install -g @openai/codex@latest 2>&1 | tee -a "$LOG_FILE"; then
+        log "Codex CLI updated to $(sudo -u ubuntu codex --version 2>/dev/null || echo 'unknown')"
+    else
+        log "WARNING: Codex CLI update failed, using AMI-baked version"
+    fi
+}
+
+configure_gateway() {
+    local mode="$1"
+    local port="${OPENCLAW_PORT:-18789}"
+
+    case "$mode" in
+        tailscale-serve)
+            log "Configuring Tailscale Serve for OpenClaw gateway on port $port"
+            tailscale serve --bg https+insecure://localhost:${port} || {
+                log "ERROR: Failed to configure Tailscale Serve"
+                return 1
+            }
+            log "Tailscale Serve configured successfully"
+            ;;
+        tailscale-funnel)
+            log "Configuring Tailscale Funnel for OpenClaw gateway on port $port"
+            tailscale funnel --bg https+insecure://localhost:${port} || {
+                log "ERROR: Failed to configure Tailscale Funnel"
+                return 1
+            }
+            log "Tailscale Funnel configured - gateway is publicly accessible"
+            ;;
+        local|none|"")
+            log "Gateway mode: ${mode:-local} - no Tailscale proxy configured"
+            ;;
+        *)
+            log "WARNING: Unknown gateway mode '$mode', skipping proxy configuration"
+            ;;
+    esac
+
+    # Store gateway URL in SSM for CLI access
+    if [ "$mode" = "tailscale-serve" ] || [ "$mode" = "tailscale-funnel" ]; then
+        TAILSCALE_HOSTNAME=$(tailscale status --json | jq -r '.Self.DNSName' | sed 's/\.$//')
+        GATEWAY_URL="https://${TAILSCALE_HOSTNAME}"
+        aws ssm put-parameter \
+            --name "/clawdult/${AGENT_NAME}/gateway-url" \
+            --value "$GATEWAY_URL" \
+            --type "String" \
+            --overwrite \
+            --region "$REGION" || log "WARNING: Failed to store gateway URL in SSM"
+    fi
+}
+
+generate_openclaw_config() {
+    local base_config="${OPENCLAW_DIR}/openclaw.json"
+    local ssm_config="${SECRETS_DIR}/openclaw-config.json"
+    local output_config="${OPENCLAW_DIR}/openclaw.json"
+
+    # Start with base template
+    local config
+    config=$(cat "$base_config")
+
+    # Merge SSM config if present
+    if [[ -f "$ssm_config" ]]; then
+        local ssm_data
+        ssm_data=$(cat "$ssm_config")
+
+        # Use jq to merge configs (SSM overrides base)
+        config=$(echo "$config" | jq --argjson ssm "$ssm_data" '. * $ssm')
+    fi
+
+    # Inject channel tokens from secrets
+    if [[ -f "${SECRETS_DIR}/telegram-bot-token" ]]; then
+        local token
+        token=$(cat "${SECRETS_DIR}/telegram-bot-token")
+        config=$(echo "$config" | jq --arg token "$token" '.channels.telegram.enabled = true | .channels.telegram.botToken = $token')
+    fi
+
+    if [[ -f "${SECRETS_DIR}/discord-oauth" ]]; then
+        local token
+        token=$(cat "${SECRETS_DIR}/discord-oauth")
+        config=$(echo "$config" | jq --arg token "$token" '.channels.discord.enabled = true | .channels.discord.token = $token')
+    fi
+
+    if [[ -f "${SECRETS_DIR}/slack-oauth" ]]; then
+        local token
+        token=$(cat "${SECRETS_DIR}/slack-oauth")
+        config=$(echo "$config" | jq --arg token "$token" '.channels.slack.enabled = true | .channels.slack.token = $token')
+    fi
+
+    if [[ -f "${SECRETS_DIR}/googlechat-token" ]]; then
+        local token
+        token=$(cat "${SECRETS_DIR}/googlechat-token")
+        config=$(echo "$config" | jq --argjson token "$token" '.channels.googlechat.enabled = true | .channels.googlechat.serviceAccount = $token')
+    fi
+
+    if [[ -f "${SECRETS_DIR}/teams-token" ]]; then
+        local token
+        token=$(cat "${SECRETS_DIR}/teams-token")
+        config=$(echo "$config" | jq --arg token "$token" '.channels.teams.enabled = true | .channels.teams.appSecret = $token')
+    fi
+
+    if [[ -f "${SECRETS_DIR}/matrix-token" ]]; then
+        local token
+        token=$(cat "${SECRETS_DIR}/matrix-token")
+        config=$(echo "$config" | jq --arg token "$token" '.channels.matrix.enabled = true | .channels.matrix.accessToken = $token')
+    fi
+
+    if [[ -f "${SECRETS_DIR}/webchat-token" ]]; then
+        local token
+        token=$(cat "${SECRETS_DIR}/webchat-token")
+        config=$(echo "$config" | jq --arg token "$token" '.channels.webchat.enabled = true | .channels.webchat.authToken = $token')
+    fi
+
+    if [[ -f "${SECRETS_DIR}/bluebubbles-token" ]]; then
+        local token
+        token=$(cat "${SECRETS_DIR}/bluebubbles-token")
+        config=$(echo "$config" | jq --arg token "$token" '.channels.bluebubbles.enabled = true | .channels.bluebubbles.serverPassword = $token')
+    fi
+
+    if [[ -f "${SECRETS_DIR}/zalo-token" ]]; then
+        local token
+        token=$(cat "${SECRETS_DIR}/zalo-token")
+        config=$(echo "$config" | jq --arg token "$token" '.channels.zalo.enabled = true | .channels.zalo.oaToken = $token')
+    fi
+
+    # Inject DM policies per channel
+    if [[ -f "$ssm_config" ]]; then
+        local dm_policies
+        dm_policies=$(jq -r '.dmPolicies // empty' "$ssm_config")
+        if [[ -n "$dm_policies" && "$dm_policies" != "null" ]]; then
+            for channel in $(echo "$dm_policies" | jq -r 'keys[]'); do
+                policy=$(echo "$dm_policies" | jq -r ".\"$channel\"")
+                config=$(echo "$config" | jq --arg ch "$channel" --arg pol "$policy" '.channels[$ch].dmPolicy = $pol')
+            done
+        fi
+    fi
+
+    # Write final config
+    echo "$config" > "$output_config"
+    chmod 600 "$output_config"
+    chown ubuntu:ubuntu "$output_config"
+
+    log "OpenClaw config written to $output_config"
+}
+
+main "$@"

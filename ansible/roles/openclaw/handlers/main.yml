@@ -1,0 +1,12 @@
+---
+- name: Reload systemd
+  systemd:
+    daemon_reload: yes
+
+- name: Restart OpenClaw
+  systemd:
+    name: openclaw
+    state: restarted
+  register: openclaw_restart_result
+  # Service may not be fully configured during AMI build (missing runtime secrets)
+  failed_when: openclaw_restart_result is failed and 'not found' not in (openclaw_restart_result.msg | default(''))

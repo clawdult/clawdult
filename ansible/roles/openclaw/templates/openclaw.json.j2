@@ -1,0 +1,38 @@
+{
+  "agents": {
+    "defaults": {}
+  },
+  "gateway": {
+    "mode": "local",
+    "bind": "127.0.0.1",
+    "port": 18789,
+    "auth": {
+      "type": "token",
+      "tokenFile": "{{ clawdult_base_dir }}/secrets/openclaw-token"
+    }
+  },
+  "channels": {
+    "whatsapp": { "enabled": false },
+    "telegram": { "enabled": false },
+    "slack": { "enabled": false },
+    "discord": { "enabled": false },
+    "signal": { "enabled": false },
+    "googlechat": { "enabled": false },
+    "teams": { "enabled": false },
+    "matrix": { "enabled": false },
+    "webchat": { "enabled": false },
+    "imessage": { "enabled": false },
+    "bluebubbles": { "enabled": false },
+    "zalo": { "enabled": false }
+  },
+  "automation": {
+    "cron": { "enabled": false, "maxConcurrent": 5 },
+    "webhooks": { "enabled": false, "port": 18790 }
+  },
+  "security": {
+    "dmPairing": true,
+    "groupSandbox": true
+  },
+  "dataDir": "{{ clawdult_base_dir }}/openclaw/data",
+  "secretsDir": "{{ clawdult_base_dir }}/secrets"
+}

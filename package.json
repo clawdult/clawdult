@@ -1,0 +1,83 @@
+{
+  "name": "clawdult",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "AI Agent Workstation Provisioner - Provision dedicated EC2 instances for AI agents",
+  "main": "dist/cli/index.js",
+  "bin": {
+    "clawdult": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc && npm test",
+    "dev": "tsc --watch",
+    "start": "node dist/cli/index.js",
+    "lint": "eslint src",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
+    "clean": "rm -rf dist",
+    "prepare": "husky",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "workstation",
+    "ec2",
+    "aws",
+    "provisioner",
+    "claude",
+    "codex"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@aws-sdk/client-budgets": "^3.700.0",
+    "@aws-sdk/client-ec2": "^3.700.0",
+    "@aws-sdk/client-iam": "^3.700.0",
+    "@aws-sdk/client-ssm": "^3.893.0",
+    "@aws-sdk/client-sts": "^3.700.0",
+    "@aws-sdk/credential-providers": "^3.990.0",
+    "@inquirer/prompts": "^7.0.0",
+    "ansi-escapes": "^7.0.0",
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "cosmiconfig": "^9.0.0",
+    "keytar": "^7.9.0",
+    "ora": "^8.1.0",
+    "tabtab": "^3.0.2",
+    "yaml": "^2.5.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^22.0.0",
+    "@types/tabtab": "^3.0.4",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "husky": "^9.1.7",
+    "jest": "^30.2.0",
+    "lint-staged": "^16.2.7",
+    "prettier": "^3.8.1",
+    "ts-jest": "^29.4.6",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.54.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "templates"
+  ],
+  "lint-staged": {
+    "*.ts": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.json": [
+      "prettier --write"
+    ]
+  }
+}

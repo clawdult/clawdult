@@ -1,0 +1,31 @@
+[Unit]
+Description=OpenClaw AI Assistant Gateway
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory={{ clawdult_base_dir }}/openclaw
+ExecStart=/usr/bin/openclaw gateway --config {{ clawdult_base_dir }}/openclaw/openclaw.json
+Restart=on-failure
+RestartSec=10
+
+# Environment
+Environment=NODE_ENV=production
+EnvironmentFile=-{{ clawdult_base_dir }}/config/agent.env
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths={{ clawdult_base_dir }}/openclaw/data {{ clawdult_base_dir }}/secrets {{ clawdult_base_dir }}/logs
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openclaw
+
+[Install]
+WantedBy=multi-user.target

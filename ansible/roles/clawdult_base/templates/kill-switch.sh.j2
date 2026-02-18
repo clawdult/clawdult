@@ -1,0 +1,108 @@
+#!/bin/bash
+# Clawdult Kill Switch
+# Multi-level emergency shutdown for agent workstation
+
+set -e
+
+LEVEL="${1:-1}"
+LOG_FILE="{{ clawdult_base_dir }}/logs/audit/kill-switch.log"
+
+log() {
+    echo "[$(date -Iseconds)] $*" | tee -a "$LOG_FILE"
+}
+
+level_1_soft_stop() {
+    log "LEVEL 1: Soft stop initiated"
+
+    # Gracefully stop agent processes (|| true: process may not be running)
+    pkill -TERM -f "claude" || true
+    pkill -TERM -f "codex" || true
+    pkill -TERM -f "clawdult" || true
+
+    log "LEVEL 1: Soft stop completed"
+}
+
+level_2_hard_stop() {
+    log "LEVEL 2: Hard stop initiated"
+
+    # Force kill all agent processes (|| true: process may not be running)
+    pkill -9 -f "claude" || true
+    pkill -9 -f "codex" || true
+    pkill -9 -f "node" || true
+    pkill -9 -f "python" || true
+
+    # Best-effort token revocation (|| true: non-critical during emergency shutdown)
+    if command -v gh &> /dev/null; then
+        gh auth logout --hostname github.com || true
+    fi
+
+    # Block network (except SSH) - flush first, then insert SSH accept, then drop everything else
+    iptables -F OUTPUT
+    iptables -I OUTPUT 1 -p tcp --dport 22 -j ACCEPT
+    iptables -A OUTPUT -j DROP
+
+    log "LEVEL 2: Hard stop completed, network blocked"
+}
+
+level_3_emergency() {
+    log "LEVEL 3: Emergency stop initiated"
+
+    # Run level 2 first
+    level_2_hard_stop
+
+    # Request instance stop via metadata
+    TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+    INSTANCE_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+    REGION=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+
+    # Best-effort: AWS API may be unreachable after network block in level 2
+    aws ec2 stop-instances --instance-ids "$INSTANCE_ID" --region "$REGION" || true
+
+    log "LEVEL 3: Instance stop requested"
+}
+
+level_4_nuclear() {
+    log "LEVEL 4: Nuclear option initiated"
+
+    # Run level 2 first
+    level_2_hard_stop
+
+    # Create snapshot for forensics
+    TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+    INSTANCE_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+    REGION=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+
+    # Best-effort: AWS API may be unreachable after network block in level 2
+    VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" --query 'Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId' --output text) || true
+    if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+        aws ec2 create-snapshot --volume-id "$VOLUME_ID" --description "Kill switch snapshot - $(date -Iseconds)" --region "$REGION" || true
+    fi
+
+    # Best-effort: terminate even if snapshot failed
+    aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" --region "$REGION" || true
+
+    log "LEVEL 4: Snapshot created, instance termination requested"
+}
+
+case "$LEVEL" in
+    1)
+        level_1_soft_stop
+        ;;
+    2)
+        level_2_hard_stop
+        ;;
+    3)
+        level_3_emergency
+        ;;
+    4)
+        level_4_nuclear
+        ;;
+    *)
+        echo "Usage: $0 [1|2|3|4]"
+        echo "  1 - Soft stop (graceful shutdown)"
+        echo "  2 - Hard stop (force kill + revoke tokens + block network)"
+        echo "  3 - Emergency (stop EC2 instance)"
+        echo "  4 - Nuclear (snapshot + terminate instance)"
+        exit 1
+        ;;
+esac

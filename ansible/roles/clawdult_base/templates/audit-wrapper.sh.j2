@@ -1,0 +1,23 @@
+#!/bin/bash
+# Clawdult Audit Wrapper
+# Wraps CLI commands to log invocations for audit purposes
+
+AUDIT_LOG="{{ clawdult_base_dir }}/logs/audit/cli.log"
+COMMAND="$1"
+shift
+
+# Log the invocation
+log_entry() {
+    local timestamp=$(date -Iseconds)
+    local user=$(whoami)
+    local cmd="$COMMAND"
+    local args="$*"
+
+    echo "{\"timestamp\":\"$timestamp\",\"user\":\"$user\",\"command\":\"$cmd\",\"args\":\"$args\"}" >> "$AUDIT_LOG"
+}
+
+# Log before execution
+log_entry "$@"
+
+# Execute the command
+exec "$COMMAND" "$@"

@@ -1,0 +1,35 @@
+# Available Tools
+
+## CLI Tools
+
+| Tool | Command | Purpose |
+|------|---------|---------|
+| Claude Code | `claude` | AI coding assistant with file editing |
+| Codex CLI | `codex` | OpenAI coding assistant |
+| GitHub CLI | `gh` | Repository management, PRs, issues |
+| AWS CLI | `aws` | AWS service operations (scoped) |
+| Docker | `docker` | Container build and management |
+| uv | `uv` | Fast Python package management |
+| Git | `git` | Version control |
+
+## MCP Servers
+
+### Playwright (Browser Automation)
+- **Port**: 8931
+- **Config**: `/opt/clawdult/tools/playwright/mcp-config.json`
+- **Capabilities**: Navigate, click, type, screenshot, PDF generation
+
+## Package Managers
+
+- **npm** - Node.js packages (prefix: `~/.npm-global`)
+- **pip/uv** - Python packages
+- **cargo** - Rust packages
+- **go install** - Go packages
+- **brew** - Additional system tools (Linuxbrew)
+
+## Environment Variables
+
+Key environment variables are set in `/opt/clawdult/config/agent.env`:
+- `CLAWDULT_INSTANCE=true`
+- `CLAWDULT_WORKSPACE=/opt/clawdult/workspace`
+- `CLAWDULT_AGENT_NAME` - This agent's name (set at boot)

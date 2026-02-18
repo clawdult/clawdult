@@ -1,0 +1,51 @@
+---
+- name: Create OpenClaw directories
+  file:
+    path: '{{ item }}'
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  loop:
+    - '{{ clawdult_base_dir }}/openclaw'
+    - '{{ clawdult_base_dir }}/openclaw/data'
+
+- name: Install OpenClaw globally via npm
+  npm:
+    name: openclaw@latest
+    global: yes
+    state: present
+
+- name: Create OpenClaw config template
+  template:
+    src: openclaw.json.j2
+    dest: '{{ clawdult_base_dir }}/openclaw/openclaw.json'
+    owner: ubuntu
+    group: ubuntu
+    mode: '0600'
+  notify: Restart OpenClaw
+
+- name: Create OpenClaw systemd service
+  template:
+    src: openclaw.service.j2
+    dest: /etc/systemd/system/openclaw.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - Reload systemd
+    - Restart OpenClaw
+
+- name: Create OpenClaw bootstrap script
+  template:
+    src: bootstrap-openclaw.sh.j2
+    dest: '{{ clawdult_base_dir }}/bin/bootstrap-openclaw'
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Enable OpenClaw service
+  systemd:
+    name: openclaw
+    enabled: yes
+    daemon_reload: yes

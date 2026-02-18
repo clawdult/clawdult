@@ -1,0 +1,12 @@
+---
+- name: reload systemd
+  systemd:
+    daemon_reload: yes
+
+- name: Restart playwright-mcp
+  systemd:
+    name: playwright-mcp
+    state: restarted
+  register: playwright_restart_result
+  # Service may not be fully configured during AMI build (missing runtime config)
+  failed_when: playwright_restart_result is failed and 'not found' not in (playwright_restart_result.msg | default(''))

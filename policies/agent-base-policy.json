@@ -1,0 +1,84 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SSMParameterAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath",
+        "ssm:PutParameter"
+      ],
+      "Resource": "arn:aws:ssm:*:*:parameter/clawdult/${aws:PrincipalTag/clawdult:agent}/*"
+    },
+    {
+      "Sid": "CloudWatchLogsAccess",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogStreams",
+        "logs:DescribeLogGroups"
+      ],
+      "Resource": "arn:aws:logs:*:*:log-group:/clawdult/*"
+    },
+    {
+      "Sid": "S3WorkspaceAccess",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::clawdult-workspace-*", "arn:aws:s3:::clawdult-workspace-*/*"]
+    },
+    {
+      "Sid": "EC2SelfDescribe",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeTags",
+        "ec2:DescribeInstanceStatus",
+        "ec2:DescribeVolumes"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EC2SelfStop",
+      "Effect": "Allow",
+      "Action": ["ec2:StopInstances", "ec2:TerminateInstances"],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/clawdult:agent": "${aws:PrincipalTag/clawdult:agent}"
+        }
+      }
+    },
+    {
+      "Sid": "EC2SelfSnapshot",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateSnapshot"],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/clawdult:agent": "${aws:PrincipalTag/clawdult:agent}"
+        }
+      }
+    },
+    {
+      "Sid": "CloudWatchMetrics",
+      "Effect": "Allow",
+      "Action": ["cloudwatch:PutMetricData"],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "cloudwatch:namespace": "Clawdult"
+        }
+      }
+    },
+    {
+      "Sid": "SecretsManagerRead",
+      "Effect": "Allow",
+      "Action": ["secretsmanager:GetSecretValue"],
+      "Resource": "arn:aws:secretsmanager:*:*:secret:clawdult/*"
+    }
+  ]
+}

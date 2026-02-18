@@ -1,0 +1,88 @@
+---
+- name: Install Docker dependencies
+  apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+
+- name: Add Docker GPG key
+  shell: |
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg
+  args:
+    creates: /etc/apt/keyrings/docker.gpg
+
+- name: Add Docker repository
+  apt_repository:
+    repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+    state: present
+
+- name: Configure subuid for Docker userns-remap
+  lineinfile:
+    path: /etc/subuid
+    line: 'ubuntu:100000:65536'
+    create: yes
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Configure subgid for Docker userns-remap
+  lineinfile:
+    path: /etc/subgid
+    line: 'ubuntu:100000:65536'
+    create: yes
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install Docker
+  apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: yes
+
+- name: Add ubuntu user to docker group
+  user:
+    name: ubuntu
+    groups: docker
+    append: yes
+
+- name: Start Docker service
+  systemd:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: Restrict Docker socket permissions
+  file:
+    path: /var/run/docker.sock
+    group: docker
+    mode: '0660'
+
+- name: Configure Docker daemon
+  copy:
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "100m",
+          "max-file": "3"
+        },
+        "storage-driver": "overlay2",
+        "userns-remap": "ubuntu",
+        "no-new-privileges": true,
+        "live-restore": true
+      }
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Docker

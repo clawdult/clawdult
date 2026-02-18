@@ -1,0 +1,254 @@
+---
+- name: Create clawdult directories
+  file:
+    path: '{{ item }}'
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  loop:
+    - '{{ clawdult_base_dir }}'
+    - '{{ clawdult_base_dir }}/bin'
+    - '{{ clawdult_base_dir }}/config'
+    - '{{ clawdult_base_dir }}/logs'
+    - '{{ clawdult_base_dir }}/logs/agent'
+    - '{{ clawdult_base_dir }}/logs/audit'
+    - '{{ clawdult_base_dir }}/logs/cli'
+    - '{{ clawdult_base_dir }}/workspace'
+    - '{{ clawdult_base_dir }}/workspace/projects'
+    - '{{ clawdult_base_dir }}/tools'
+
+- name: Create secrets directory with restricted permissions
+  file:
+    path: '{{ clawdult_base_dir }}/secrets'
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0700'
+
+- name: Mount secrets as tmpfs
+  mount:
+    path: '{{ clawdult_base_dir }}/secrets'
+    src: tmpfs
+    fstype: tmpfs
+    opts: size=100m,mode=0700,uid=1000,gid=1000
+    state: mounted
+
+- name: Add tmpfs mount to fstab
+  lineinfile:
+    path: /etc/fstab
+    line: 'tmpfs {{ clawdult_base_dir }}/secrets tmpfs size=100m,mode=0700,uid=1000,gid=1000 0 0'
+    create: yes
+
+- name: Create environment file
+  template:
+    src: agent.env.j2
+    dest: '{{ clawdult_base_dir }}/config/agent.env'
+    owner: ubuntu
+    group: ubuntu
+    mode: '0600'
+
+- name: Create agent config file
+  template:
+    src: agent.yaml.j2
+    dest: '{{ clawdult_base_dir }}/config/agent.yaml'
+    owner: ubuntu
+    group: ubuntu
+    mode: '0644'
+
+- name: Create workspace documentation
+  template:
+    src: '{{ item }}.j2'
+    dest: '{{ clawdult_base_dir }}/workspace/{{ item }}'
+    owner: ubuntu
+    group: ubuntu
+    mode: '0644'
+  loop:
+    - AGENTS.md
+    - SOUL.md
+    - TOOLS.md
+
+- name: Install Node.js via NodeSource
+  block:
+    - name: Add NodeSource GPG key
+      shell: |
+        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
+      args:
+        creates: /usr/share/keyrings/nodesource.gpg
+
+    - name: Add NodeSource repository
+      apt_repository:
+        repo: 'deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_{{ node_version }}.x nodistro main'
+        state: present
+
+    - name: Install Node.js
+      apt:
+        name: nodejs
+        state: present
+        update_cache: yes
+
+- name: Create npm global directory for ubuntu user
+  file:
+    path: /home/ubuntu/.npm-global
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+
+- name: Configure npm prefix for ubuntu user
+  copy:
+    content: |
+      prefix=/home/ubuntu/.npm-global
+    dest: /home/ubuntu/.npmrc
+    owner: ubuntu
+    group: ubuntu
+    mode: '0644'
+
+- name: Install Python
+  apt:
+    name:
+      - python{{ python_version }}
+      - python{{ python_version }}-venv
+      - python3-pip
+    state: present
+
+- name: Download uv installer
+  become_user: ubuntu
+  get_url:
+    url: "https://astral.sh/uv/{{ uv_version }}/install.sh"
+    dest: /tmp/uv-install.sh
+    mode: '0755'
+  when: not ansible_check_mode
+
+- name: Install uv (Python package manager) for ubuntu user
+  become_user: ubuntu
+  command: /tmp/uv-install.sh
+  args:
+    creates: /home/ubuntu/.local/bin/uv
+  environment:
+    UV_INSTALL_DIR: /home/ubuntu/.local/bin
+
+- name: Clean up uv installer
+  file:
+    path: /tmp/uv-install.sh
+    state: absent
+
+- name: Install Homebrew (Linuxbrew) for ubuntu user
+  become_user: ubuntu
+  shell: |
+    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  args:
+    creates: /home/linuxbrew/.linuxbrew/bin/brew
+  environment:
+    HOME: /home/ubuntu
+
+- name: Install ffmpeg (required by openclaw whisper skill)
+  apt:
+    name: ffmpeg
+    state: present
+
+- name: Install Go
+  block:
+    - name: Download Go
+      get_url:
+        url: https://go.dev/dl/go{{ go_version }}.linux-amd64.tar.gz
+        dest: /tmp/go.tar.gz
+        mode: '0644'
+
+    - name: Extract Go
+      unarchive:
+        src: /tmp/go.tar.gz
+        dest: /usr/local
+        remote_src: yes
+        creates: /usr/local/go/bin/go
+
+- name: Download rustup installer
+  become_user: ubuntu
+  get_url:
+    url: https://sh.rustup.rs
+    dest: /tmp/rustup-init.sh
+    mode: '0755'
+
+- name: Verify rustup installer checksum
+  become_user: ubuntu
+  shell: |
+    sha256sum /tmp/rustup-init.sh | cut -d' ' -f1
+  register: rustup_checksum
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Show rustup installer checksum for audit
+  debug:
+    msg: "rustup-init.sh SHA256: {{ rustup_checksum.stdout | default('skipped') }}"
+  when: rustup_checksum is defined
+
+- name: Verify rustup installer checksum
+  assert:
+    that:
+      - rustup_checksum.stdout == rustup_expected_checksum
+    fail_msg: "Rustup installer checksum mismatch! Expected {{ rustup_expected_checksum }}, got {{ rustup_checksum.stdout }}"
+    success_msg: "Rustup installer checksum verified"
+  when: not ansible_check_mode
+
+- name: Install Rust via rustup
+  become_user: ubuntu
+  command: /tmp/rustup-init.sh -y
+  args:
+    creates: /home/ubuntu/.cargo/bin/rustc
+
+- name: Clean up rustup installer
+  file:
+    path: /tmp/rustup-init.sh
+    state: absent
+
+- name: Create kill-switch script
+  template:
+    src: kill-switch.sh.j2
+    dest: '{{ clawdult_base_dir }}/bin/kill-switch'
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Create audit-wrapper script
+  template:
+    src: audit-wrapper.sh.j2
+    dest: '{{ clawdult_base_dir }}/bin/audit-wrapper'
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Set CLAWDULT_INSTANCE environment variable
+  lineinfile:
+    path: /etc/environment
+    line: 'CLAWDULT_INSTANCE=true'
+    create: yes
+
+- name: Ensure PATH includes all tool directories
+  lineinfile:
+    path: /etc/environment
+    regexp: '^PATH='
+    line: 'PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/usr/local/go/bin:/home/ubuntu/.local/bin:/home/ubuntu/.npm-global/bin:/home/ubuntu/.cargo/bin:/home/linuxbrew/.linuxbrew/bin"'
+
+- name: Create swap file
+  command: fallocate -l 2G /swapfile
+  args:
+    creates: /swapfile
+
+- name: Set swap file permissions
+  file:
+    path: /swapfile
+    mode: '0600'
+
+- name: Format swap file
+  command: mkswap /swapfile
+  when: ansible_swaptotal_mb == 0
+
+- name: Enable swap file
+  command: swapon /swapfile
+  when: ansible_swaptotal_mb == 0
+
+- name: Add swap to fstab
+  lineinfile:
+    path: /etc/fstab
+    line: '/swapfile none swap sw 0 0'
+    create: yes

@@ -1,0 +1,74 @@
+#!/bin/bash
+# Authenticate Tailscale using auth key from secrets
+# Run during instance bootstrap after secrets are fetched from SSM
+
+set -euo pipefail
+
+SECRETS_DIR="{{ clawdult_base_dir }}/secrets"
+AUTH_KEY_FILE="${SECRETS_DIR}/tailscale-auth-key"
+
+if [[ ! -f "$AUTH_KEY_FILE" ]]; then
+    echo "ERROR: Tailscale auth key not found at $AUTH_KEY_FILE"
+    exit 1
+fi
+
+AUTH_KEY=$(cat "$AUTH_KEY_FILE")
+
+if [[ -z "$AUTH_KEY" ]]; then
+    echo "ERROR: Tailscale auth key is empty"
+    exit 1
+fi
+
+# Wait for tailscaled to be ready (check socket, not `tailscale status` which
+# returns exit 1 when logged out in Tailscale >= 1.78)
+TAILSCALE_SOCK="/run/tailscale/tailscaled.sock"
+for i in $(seq 1 30); do
+    if [[ -S "$TAILSCALE_SOCK" ]]; then
+        break
+    fi
+    if [[ "$i" -eq 30 ]]; then
+        echo "ERROR: tailscaled socket not found at $TAILSCALE_SOCK after 60s"
+        exit 1
+    fi
+    echo "Waiting for tailscaled (attempt ${i}/30)..."
+    sleep 2
+done
+
+# Authenticate with Tailscale
+AGENT_NAME="${1:-$(hostname)}"
+tailscale up --authkey="$AUTH_KEY" --hostname="clawdult-${AGENT_NAME}"
+
+echo "Tailscale authenticated successfully"
+
+# Wait for Tailscale IP to be assigned (may take a few seconds after `tailscale up`)
+TAILSCALE_IP=""
+for i in $(seq 1 15); do
+    TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || true)
+    if [[ -n "$TAILSCALE_IP" ]]; then
+        break
+    fi
+    echo "Waiting for Tailscale IP assignment (attempt ${i}/15)..."
+    sleep 2
+done
+
+if [[ -z "$TAILSCALE_IP" ]]; then
+    echo "ERROR: Tailscale authenticated but no IPv4 address assigned after 30s"
+    echo "ERROR: Check Tailscale ACLs and device authorization settings"
+    exit 1
+fi
+
+# Get AWS region from instance metadata
+TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+
+if ! aws ssm put-parameter \
+    --name "/clawdult/${AGENT_NAME}/tailscale-ip" \
+    --value "$TAILSCALE_IP" \
+    --type "String" \
+    --overwrite \
+    --region "$REGION"; then
+    echo "ERROR: Failed to store Tailscale IP in SSM"
+    exit 1
+fi
+
+echo "Tailscale IP ${TAILSCALE_IP} stored in SSM"

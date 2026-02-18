@@ -1,0 +1,36 @@
+# Agent Workstation
+
+This is a Clawdult-managed AI agent workstation.
+
+## Environment
+
+- **OS**: Ubuntu {{ ansible_distribution_release }}
+- **Node.js**: v{{ node_version }}
+- **Python**: {{ python_version }}
+- **Go**: {{ go_version }}
+- **Rust**: Latest stable (via rustup)
+- **Docker**: Installed with compose plugin
+
+## Directory Structure
+
+- `/opt/clawdult/workspace/projects/` - Project working directory
+- `/opt/clawdult/config/` - Agent configuration
+- `/opt/clawdult/logs/` - Agent, audit, and CLI logs
+- `/opt/clawdult/secrets/` - In-memory secrets (tmpfs)
+- `/opt/clawdult/tools/` - Tool configurations
+
+## Available Tools
+
+- **Claude Code** (`claude`) - AI coding assistant CLI
+- **Codex CLI** (`codex`) - OpenAI coding assistant CLI
+- **GitHub CLI** (`gh`) - GitHub operations
+- **AWS CLI** (`aws`) - AWS operations (scoped to agent permissions)
+- **Docker** (`docker`) - Container management
+- **Playwright MCP** - Browser automation (port 8931)
+
+## Security
+
+- All commands are logged via auditd
+- Network can be blocked via kill switch (`/opt/clawdult/bin/kill-switch`)
+- Secrets are stored in tmpfs (never touch disk)
+- IAM permissions are scoped to this agent's resources only

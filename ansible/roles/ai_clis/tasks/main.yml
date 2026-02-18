@@ -1,0 +1,111 @@
+---
+- name: Install Claude Code CLI
+  npm:
+    name: '@anthropic-ai/claude-code'
+    global: yes
+    state: present
+  become_user: ubuntu
+
+- name: Install OpenAI Codex CLI
+  npm:
+    name: '@openai/codex'
+    global: yes
+    state: present
+  become_user: ubuntu
+
+- name: Install GitHub CLI
+  block:
+    - name: Add GitHub CLI GPG key
+      shell: |
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+        sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+      args:
+        creates: /usr/share/keyrings/githubcli-archive-keyring.gpg
+
+    - name: Add GitHub CLI repository
+      apt_repository:
+        repo: 'deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main'
+        state: present
+
+    - name: Install GitHub CLI
+      apt:
+        name: gh
+        state: present
+        update_cache: yes
+
+- name: Install AWS CLI v2
+  block:
+    - name: Download AWS CLI
+      get_url:
+        url: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+        dest: /tmp/awscliv2.zip
+        mode: '0644'
+
+    - name: Unzip AWS CLI
+      unarchive:
+        src: /tmp/awscliv2.zip
+        dest: /tmp
+        remote_src: yes
+        creates: /tmp/aws
+
+    - name: Install AWS CLI
+      command: /tmp/aws/install --update
+      args:
+        creates: /usr/local/bin/aws
+
+    - name: Cleanup AWS CLI installer
+      file:
+        path: '{{ item }}'
+        state: absent
+      loop:
+        - /tmp/awscliv2.zip
+        - /tmp/aws
+
+- name: Create wrapper scripts for AI CLIs
+  template:
+    src: '{{ item }}.sh.j2'
+    dest: '/usr/local/bin/{{ item }}'
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - claude-wrapped
+    - codex-wrapped
+
+- name: Symlink claude to wrapped version
+  file:
+    src: /usr/local/bin/claude-wrapped
+    dest: /usr/local/bin/claude
+    state: link
+    force: yes
+
+- name: Symlink codex to wrapped version
+  file:
+    src: /usr/local/bin/codex-wrapped
+    dest: /usr/local/bin/codex
+    state: link
+    force: yes
+
+- name: Create GitHub bootstrap script
+  template:
+    src: bootstrap-github.sh.j2
+    dest: '{{ clawdult_base_dir }}/bin/bootstrap-github'
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Verify CLI installations
+  command: '{{ item }}'
+  loop:
+    - claude --version
+    - codex --version
+    - gh --version
+    - aws --version
+  register: cli_versions
+  changed_when: false
+
+- name: Display CLI versions
+  debug:
+    msg: '{{ item.stdout | default(item.stderr) }}'
+  loop: '{{ cli_versions.results }}'
+  when: item.rc == 0

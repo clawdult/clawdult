@@ -1,0 +1,39 @@
+---
+- name: Add Tailscale GPG key
+  shell: |
+    curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/{{ ansible_distribution_release }}.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+  args:
+    creates: /usr/share/keyrings/tailscale-archive-keyring.gpg
+
+- name: Add Tailscale repository
+  apt_repository:
+    repo: 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu {{ ansible_distribution_release }} main'
+    state: present
+
+- name: Install Tailscale
+  apt:
+    name: "tailscale={{ tailscale_version }}"
+    state: present
+    update_cache: yes
+
+- name: Create Tailscale systemd override directory
+  file:
+    path: /etc/systemd/system/tailscaled.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Create Tailscale auth script
+  template:
+    src: tailscale-auth.sh.j2
+    dest: '{{ clawdult_base_dir }}/bin/tailscale-auth'
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Enable Tailscale service
+  systemd:
+    name: tailscaled
+    enabled: yes
+    daemon_reload: yes

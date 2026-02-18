@@ -1,0 +1,73 @@
+---
+- name: Install Playwright dependencies
+  apt:
+    name:
+      - libnss3
+      - libnspr4
+      - libatk1.0-0
+      - libatk-bridge2.0-0
+      - libcups2
+      - libdrm2
+      - libxkbcommon0
+      - libxcomposite1
+      - libxdamage1
+      - libxfixes3
+      - libxrandr2
+      - libgbm1
+      - libasound2t64
+      - libpango-1.0-0
+      - libcairo2
+      - libatspi2.0-0
+    state: present
+
+- name: Install Playwright MCP server globally
+  npm:
+    name: "@playwright/mcp"
+    global: yes
+    state: present
+
+- name: Install Playwright browsers for ubuntu user
+  become_user: ubuntu
+  command: npx playwright install
+  args:
+    creates: /home/ubuntu/.cache/ms-playwright
+
+- name: Install Playwright system dependencies
+  command: npx playwright install-deps
+  args:
+    creates: /usr/lib/x86_64-linux-gnu/libxcb-shm.so.0
+  register: playwright_deps_result
+  failed_when: playwright_deps_result.rc != 0 and 'already the newest version' not in (playwright_deps_result.stderr | default(''))
+
+- name: Create Playwright tools directory
+  file:
+    path: "{{ clawdult_base_dir }}/tools/playwright"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: "0755"
+
+- name: Create Playwright MCP config
+  template:
+    src: playwright-mcp-config.json.j2
+    dest: "{{ clawdult_base_dir }}/tools/playwright/mcp-config.json"
+    owner: ubuntu
+    group: ubuntu
+    mode: "0644"
+  notify: Restart playwright-mcp
+
+- name: Install Playwright MCP systemd service
+  template:
+    src: playwright-mcp.service.j2
+    dest: /etc/systemd/system/playwright-mcp.service
+    mode: "0644"
+  notify:
+    - reload systemd
+    - Restart playwright-mcp
+
+- name: Enable Playwright MCP service
+  systemd:
+    name: playwright-mcp
+    enabled: yes
+    state: started
+    daemon_reload: yes

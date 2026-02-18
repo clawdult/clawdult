@@ -1,0 +1,92 @@
+#cloud-config
+# Clawdult Cloud-Init Configuration Template
+# Variables: {{AGENT_NAME}}, {{OWNER}}, {{REGION}}
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - jq
+  - awscli
+
+write_files:
+  - path: /opt/clawdult/config/instance.yaml
+    owner: ubuntu:ubuntu
+    permissions: '0644'
+    content: |
+      agent_name: "{{AGENT_NAME}}"
+      owner: "{{OWNER}}"
+      region: "{{REGION}}"
+      provisioned_at: "{{TIMESTAMP}}"
+
+  - path: /opt/clawdult/bin/load-secrets
+    owner: root:root
+    permissions: '0700'
+    content: |
+      #!/bin/bash
+      # Load secrets from AWS SSM Parameter Store into tmpfs
+
+      AGENT_NAME="{{AGENT_NAME}}"
+      REGION="{{REGION}}"
+      SECRETS_DIR="/opt/clawdult/secrets"
+
+      # Fetch API keys from SSM
+      aws ssm get-parameters-by-path \
+        --path "/clawdult/${AGENT_NAME}/" \
+        --with-decryption \
+        --region "$REGION" \
+        --output json | jq -r '.Parameters[] | "\(.Name)\t\(.Value)"' | while IFS=$'\t' read -r name value; do
+          key=$(basename "$name")
+          printf '%s' "$value" > "${SECRETS_DIR}/${key}"
+          chmod 600 "${SECRETS_DIR}/${key}"
+          chown ubuntu:ubuntu "${SECRETS_DIR}/${key}"
+        done
+
+      echo "Secrets loaded at $(date)" >> /opt/clawdult/logs/agent/secrets.log
+
+  - path: /etc/systemd/system/clawdult-secrets.service
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Load Clawdult Secrets from SSM
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/opt/clawdult/bin/load-secrets
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  # Create directory structure
+  - mkdir -p /opt/clawdult/{bin,config,logs/{agent,audit,cli},secrets,workspace/projects,tools}
+  - chown -R ubuntu:ubuntu /opt/clawdult
+  - chmod 700 /opt/clawdult/secrets
+
+  # Mount secrets as tmpfs
+  - mount -t tmpfs -o size=100m,mode=0700,uid=1000,gid=1000 tmpfs /opt/clawdult/secrets
+
+  # Enable secrets service
+  - systemctl daemon-reload
+  - systemctl enable clawdult-secrets.service
+  - systemctl start clawdult-secrets.service
+
+  # Start CloudWatch agent if configured
+  - |
+    if [ -f /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json ]; then
+      /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+        -a fetch-config \
+        -m ec2 \
+        -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json \
+        -s
+    fi
+
+  # Signal completion
+  - touch /opt/clawdult/.ready
+  - echo "Clawdult workstation ready at $(date)" >> /opt/clawdult/logs/agent/startup.log
+
+final_message: 'Clawdult workstation {{AGENT_NAME}} ready after $UPTIME seconds'

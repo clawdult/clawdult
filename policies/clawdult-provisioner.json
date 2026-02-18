@@ -1,0 +1,323 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EC2ManageClawdultInstances",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:RunInstances",
+        "ec2:TerminateInstances",
+        "ec2:StartInstances",
+        "ec2:StopInstances",
+        "ec2:RebootInstances",
+        "ec2:CreateTags",
+        "ec2:DeleteTags"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/clawdult:managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "EC2ManageClawdultInstancesByTag",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:TerminateInstances",
+        "ec2:StartInstances",
+        "ec2:StopInstances",
+        "ec2:RebootInstances",
+        "ec2:CreateTags",
+        "ec2:DeleteTags"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/clawdult:managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "EC2RunInstancesResources",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:*:*:subnet/*",
+        "arn:aws:ec2:*:*:network-interface/*",
+        "arn:aws:ec2:*:*:security-group/*",
+        "arn:aws:ec2:*:*:volume/*",
+        "arn:aws:ec2:*::image/*",
+        "arn:aws:ec2:*:*:key-pair/*"
+      ]
+    },
+    {
+      "Sid": "EC2DescribeResources",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceStatus",
+        "ec2:DescribeImages",
+        "ec2:DescribeTags",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeKeyPairs",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeSnapshots",
+        "ec2:DescribeAvailabilityZones",
+        "ec2:DescribeRegions"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EC2ManageClawdultSecurityGroups",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSecurityGroup",
+        "ec2:DeleteSecurityGroup",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "ec2:ResourceTag/Name": "clawdult-*"
+        }
+      }
+    },
+    {
+      "Sid": "EC2CreateSecurityGroupInVPC",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:*:*:vpc/*"
+    },
+    {
+      "Sid": "EC2CreateSecurityGroupWithTag",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:*:*:security-group/*",
+      "Condition": {
+        "StringLike": {
+          "aws:RequestTag/Name": "clawdult-*"
+        }
+      }
+    },
+    {
+      "Sid": "EC2CreateClawdultKeyPairs",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateKeyPair", "ec2:ImportKeyPair"],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "aws:RequestTag/Name": "clawdult-*"
+        }
+      }
+    },
+    {
+      "Sid": "EC2DeleteClawdultKeyPairs",
+      "Effect": "Allow",
+      "Action": "ec2:DeleteKeyPair",
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "ec2:ResourceTag/Name": "clawdult-*"
+        }
+      }
+    },
+    {
+      "Sid": "EC2PackerKeyPairs",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateKeyPair", "ec2:DeleteKeyPair", "ec2:CreateTags", "ec2:DeleteTags"],
+      "Resource": "arn:aws:ec2:*:*:key-pair/packer_*"
+    },
+    {
+      "Sid": "EC2PackerAmiCreation",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateImage",
+        "ec2:RegisterImage",
+        "ec2:DeregisterImage",
+        "ec2:ModifyImageAttribute"
+      ],
+      "Resource": [
+        "arn:aws:ec2:*:*:image/*",
+        "arn:aws:ec2:*:*:instance/*",
+        "arn:aws:ec2:*:*:snapshot/*"
+      ]
+    },
+    {
+      "Sid": "EC2CreateClawdultVolumes",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateVolume", "ec2:CreateSnapshot"],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/clawdult:managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "EC2ManageClawdultVolumes",
+      "Effect": "Allow",
+      "Action": ["ec2:DeleteVolume", "ec2:AttachVolume", "ec2:DetachVolume", "ec2:DeleteSnapshot"],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/clawdult:managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "IAMManageClawdultRoles",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:GetRole",
+        "iam:UpdateRole",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:ListRoleTags",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies"
+      ],
+      "Resource": "arn:aws:iam::*:role/clawdult-*"
+    },
+    {
+      "Sid": "IAMManageClawdultPolicies",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreatePolicy",
+        "iam:DeletePolicy",
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion",
+        "iam:ListPolicyVersions",
+        "iam:CreatePolicyVersion",
+        "iam:DeletePolicyVersion",
+        "iam:TagPolicy",
+        "iam:UntagPolicy"
+      ],
+      "Resource": "arn:aws:iam::*:policy/clawdult-*"
+    },
+    {
+      "Sid": "IAMManageClawdultInstanceProfiles",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateInstanceProfile",
+        "iam:DeleteInstanceProfile",
+        "iam:GetInstanceProfile",
+        "iam:AddRoleToInstanceProfile",
+        "iam:RemoveRoleFromInstanceProfile",
+        "iam:TagInstanceProfile",
+        "iam:UntagInstanceProfile",
+        "iam:ListInstanceProfileTags"
+      ],
+      "Resource": "arn:aws:iam::*:instance-profile/clawdult-*"
+    },
+    {
+      "Sid": "IAMPassClawdultRoles",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::*:role/clawdult-*",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "ec2.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "IAMListResources",
+      "Effect": "Allow",
+      "Action": ["iam:ListRoles", "iam:ListPolicies", "iam:ListInstanceProfiles"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "STSGetCallerIdentity",
+      "Effect": "Allow",
+      "Action": "sts:GetCallerIdentity",
+      "Resource": "*"
+    },
+    {
+      "Sid": "BudgetsManageClawdult",
+      "Effect": "Allow",
+      "Action": [
+        "budgets:ViewBudget",
+        "budgets:DescribeBudget",
+        "budgets:CreateBudget",
+        "budgets:ModifyBudget",
+        "budgets:UpdateBudget",
+        "budgets:DeleteBudget"
+      ],
+      "Resource": "arn:aws:budgets::*:budget/clawdult-*"
+    },
+    {
+      "Sid": "SSMManageClawdultParameters",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:PutParameter",
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath",
+        "ssm:DeleteParameter",
+        "ssm:AddTagsToResource",
+        "ssm:RemoveTagsFromResource"
+      ],
+      "Resource": "arn:aws:ssm:*:*:parameter/clawdult/*"
+    },
+    {
+      "Sid": "SecretsManagerManageClawdult",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:CreateSecret",
+        "secretsmanager:DeleteSecret",
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:UpdateSecret",
+        "secretsmanager:TagResource",
+        "secretsmanager:UntagResource"
+      ],
+      "Resource": "arn:aws:secretsmanager:*:*:secret:clawdult/*"
+    },
+    {
+      "Sid": "CloudWatchLogsManageClawdult",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:DeleteLogGroup",
+        "logs:CreateLogStream",
+        "logs:DeleteLogStream",
+        "logs:PutLogEvents",
+        "logs:GetLogEvents",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+        "logs:TagResource",
+        "logs:UntagResource"
+      ],
+      "Resource": "arn:aws:logs:*:*:log-group:/clawdult/*"
+    },
+    {
+      "Sid": "S3ManageClawdultBuckets",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:DeleteBucket",
+        "s3:GetBucketLocation",
+        "s3:GetBucketTagging",
+        "s3:PutBucketTagging",
+        "s3:ListBucket",
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": ["arn:aws:s3:::clawdult-*", "arn:aws:s3:::clawdult-*/*"]
+    }
+  ]
+}

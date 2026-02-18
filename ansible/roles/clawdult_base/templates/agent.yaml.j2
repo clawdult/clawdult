@@ -1,0 +1,26 @@
+# Clawdult Agent Configuration
+# Edit this file to customize agent behavior
+
+agent:
+  base_dir: {{ clawdult_base_dir }}
+  workspace: {{ clawdult_base_dir }}/workspace
+  logs_dir: {{ clawdult_base_dir }}/logs
+
+# Logging configuration
+logging:
+  level: info
+  format: json
+  retention_days: 30
+
+# Audit configuration
+audit:
+  enabled: true
+  log_all_commands: true
+  log_file_access: true
+  log_network: true
+
+# Auto-shutdown configuration
+idle:
+  enabled: false
+  timeout_hours: 4
+  check_interval_minutes: 15

@@ -1,0 +1,44 @@
+#!/bin/bash
+# Bootstrap GitHub CLI from SSM secrets
+# Run during instance bootstrap after secrets are fetched from SSM
+
+set -euo pipefail
+
+SECRETS_DIR="{{ clawdult_base_dir }}/secrets"
+LOG_FILE="{{ clawdult_base_dir }}/logs/bootstrap-github.log"
+
+log() {
+    echo "[$(date -Iseconds)] $*" | tee -a "$LOG_FILE"
+}
+
+log "Starting GitHub bootstrap..."
+
+# Target user for GitHub configuration (ubuntu runs OpenClaw and SSH sessions)
+TARGET_USER="ubuntu"
+TARGET_HOME="/home/${TARGET_USER}"
+
+# Authenticate gh CLI if token present
+if [[ -f "${SECRETS_DIR}/github-token" ]]; then
+    log "Authenticating GitHub CLI for ${TARGET_USER}..."
+    # Ensure token file is readable by target user
+    chmod 644 "${SECRETS_DIR}/github-token"
+    sudo -u "${TARGET_USER}" gh auth login --with-token < "${SECRETS_DIR}/github-token"
+    log "GitHub CLI authenticated for ${TARGET_USER}"
+else
+    log "No GitHub token found, skipping gh auth"
+fi
+
+# Configure git user from secrets (as ubuntu user)
+if [[ -f "${SECRETS_DIR}/github-username" ]]; then
+    USERNAME=$(cat "${SECRETS_DIR}/github-username")
+    sudo -u "${TARGET_USER}" git config --global user.name "$USERNAME"
+    log "Set git user.name for ${TARGET_USER}: $USERNAME"
+fi
+
+if [[ -f "${SECRETS_DIR}/github-email" ]]; then
+    EMAIL=$(cat "${SECRETS_DIR}/github-email")
+    sudo -u "${TARGET_USER}" git config --global user.email "$EMAIL"
+    log "Set git user.email for ${TARGET_USER}: $EMAIL"
+fi
+
+log "GitHub bootstrap complete"

@@ -1,0 +1,20 @@
+#!/bin/bash
+# Wrapped Claude CLI with audit logging
+
+AUDIT_LOG="{{ clawdult_base_dir }}/logs/cli/claude.log"
+
+# Log invocation
+echo "{\"timestamp\":\"$(date -Iseconds)\",\"user\":\"$(whoami)\",\"command\":\"claude\",\"args\":\"$*\"}" >> "$AUDIT_LOG"
+
+# Source environment
+if [ -f "{{ clawdult_base_dir }}/config/agent.env" ]; then
+    source "{{ clawdult_base_dir }}/config/agent.env"
+fi
+
+# Load API key from secrets if available
+if [ -f "{{ clawdult_base_dir }}/secrets/anthropic-api-key" ]; then
+    export ANTHROPIC_API_KEY=$(cat "{{ clawdult_base_dir }}/secrets/anthropic-api-key")
+fi
+
+# Execute claude directly (not via symlink to avoid recursion)
+exec /home/ubuntu/.npm-global/bin/claude "$@"

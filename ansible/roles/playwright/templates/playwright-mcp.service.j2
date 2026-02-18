@@ -1,0 +1,24 @@
+[Unit]
+Description=Playwright MCP Server
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory={{ clawdult_base_dir }}/tools/playwright
+ExecStart=/usr/bin/npx @playwright/mcp --port 8931 --headless --config {{ clawdult_base_dir }}/tools/playwright/mcp-config.json
+Restart=on-failure
+RestartSec=10
+
+Environment=NODE_ENV=production
+EnvironmentFile=-{{ clawdult_base_dir }}/config/agent.env
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=playwright-mcp
+
+[Install]
+WantedBy=multi-user.target

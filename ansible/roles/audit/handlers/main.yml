@@ -1,0 +1,5 @@
+---
+- name: Restart auditd
+  systemd:
+    name: auditd
+    state: restarted

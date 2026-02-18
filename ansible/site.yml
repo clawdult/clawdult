@@ -1,0 +1,64 @@
+---
+- name: Configure Clawdult Workstation
+  hosts: all
+  become: yes
+
+  vars:
+    clawdult_base_dir: /opt/clawdult
+    node_version: '22'
+    python_version: '3.12'
+    go_version: '1.22.0'
+    uv_version: '0.7.12'
+    tailscale_version: '1.80.3'
+    rustup_expected_checksum: '17247e4bcacf6027ec2e11c79a72c494c9af69ac8d1abcc1b271fa4375a106c2'
+
+  pre_tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install common packages
+      apt:
+        name:
+          - build-essential
+          - curl
+          - wget
+          - git
+          - jq
+          - unzip
+          - htop
+          - tmux
+          - vim
+          - ca-certificates
+          - gnupg
+          - lsb-release
+        state: present
+
+  roles:
+    - role: clawdult_base
+    - role: docker
+    - role: ai_clis
+    - role: tailscale
+    - role: openclaw
+    - role: playwright
+    - role: audit
+
+  post_tasks:
+    - name: Verify installation
+      shell: '. /etc/environment && {{ item }}'
+      loop:
+        - node --version
+        - python3 --version
+        - docker --version
+        - git --version
+        - uv --version
+        - ffmpeg -version
+        - brew --version
+      register: version_checks
+      changed_when: false
+
+    - name: Display installed versions
+      debug:
+        msg: '{{ item.stdout }}'
+      loop: '{{ version_checks.results }}'

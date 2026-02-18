@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Packer
+packer/manifest.json
+*.box
+
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Clawdult local data
+.clawdult/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+coverage/
+
+# npm
+npm-debug.log*

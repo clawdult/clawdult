@@ -53,12 +53,22 @@
         "iam:PutRolePolicy",
         "iam:PutGroupPolicy",
         "iam:UpdateAssumeRolePolicy",
-        "iam:PassRole",
         "iam:DeleteRolePermissionsBoundary",
         "iam:DeleteUserPermissionsBoundary",
         "iam:SetDefaultPolicyVersion"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "DenyPassRoleExceptSageMaker",
+      "Effect": "Deny",
+      "Action": "iam:PassRole",
+      "Resource": "*",
+      "Condition": {
+        "ForAnyValue:StringNotEquals": {
+          "iam:PassedToService": "sagemaker.amazonaws.com"
+        }
+      }
     },
     {
       "Sid": "DenyOrganizationsAccess",

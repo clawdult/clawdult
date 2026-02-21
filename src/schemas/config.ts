@@ -80,3 +80,26 @@ export const ToolsConfigSchema = z.object({
 });
 
 export type ToolsConfig = z.infer<typeof ToolsConfigSchema>;
+
+export const SageMakerInstanceTypeSchema = z.enum([
+  'ml.g4dn.xlarge',
+  'ml.g4dn.2xlarge',
+  'ml.g4dn.4xlarge',
+  'ml.g5.xlarge',
+  'ml.g5.2xlarge',
+  'ml.g5.4xlarge',
+  'ml.p3.2xlarge',
+  'ml.p3.8xlarge',
+]);
+
+export type SageMakerInstanceType = z.infer<typeof SageMakerInstanceTypeSchema>;
+
+export const TrainingJobConfigSchema = z.object({
+  instanceType: SageMakerInstanceTypeSchema.default('ml.g4dn.xlarge'),
+  useSpotInstances: z.boolean().default(true),
+  maxSpotWaitSeconds: z.number().int().min(60).max(86400).default(3600),
+  maxRuntimeSeconds: z.number().int().min(60).max(432000).default(86400),
+  volumeSizeGB: z.number().int().min(10).max(500).default(50),
+});
+
+export type TrainingJobConfig = z.infer<typeof TrainingJobConfigSchema>;

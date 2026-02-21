@@ -12,6 +12,7 @@ import {
   pushKeyProfileToSSM,
   pushGitHubCredentialsToSSM,
   pushConnectivityProfileToSSM,
+  pushSageMakerRoleArnToSSM,
   getTailscaleIP,
 } from '../../../services/ssm.js';
 import {
@@ -275,7 +276,10 @@ export async function provisionWorkstation(params: {
       const iamResources = await ensureIamResources(config.name, config.region);
       instanceProfileName = iamResources.instanceProfileName;
       resources.iamResourcesName = config.name;
-      iamSpinner.succeed('IAM role and instance profile ready');
+      iamSpinner.succeed('IAM role, instance profile, and SageMaker role ready');
+
+      // Store SageMaker role ARN in SSM so the agent can discover it
+      await pushSageMakerRoleArnToSSM(config.name, config.region, iamResources.sageMakerRoleArn);
     } catch (error) {
       iamSpinner.fail('Failed to create IAM resources');
       throw new Error(error instanceof Error ? error.message : String(error));

@@ -34,6 +34,8 @@ jest.unstable_mockModule('@aws-sdk/client-iam', () => {
     RemoveRoleFromInstanceProfileCommand: cmd('RemoveRoleFromInstanceProfileCommand'),
     ListAttachedRolePoliciesCommand: cmd('ListAttachedRolePoliciesCommand'),
     GetRoleCommand: cmd('GetRoleCommand'),
+    PutRolePolicyCommand: cmd('PutRolePolicyCommand'),
+    DeleteRolePolicyCommand: cmd('DeleteRolePolicyCommand'),
   };
 });
 
@@ -93,6 +95,11 @@ describe('IAM resource naming', () => {
       .mockResolvedValueOnce({})
       // addRoleToInstanceProfile
       .mockResolvedValueOnce({})
+      // ensureSageMakerRole - CreateRoleCommand + PutRolePolicyCommand
+      .mockResolvedValueOnce({
+        Role: { Arn: 'arn:aws:iam::123456789012:role/clawdult-test-agent-sagemaker-role' },
+      })
+      .mockResolvedValueOnce({})
       // waitForInstanceProfileReady - GetInstanceProfileCommand
       .mockResolvedValueOnce({
         InstanceProfile: {
@@ -111,6 +118,10 @@ describe('IAM resource naming', () => {
     expect(result.roleArn).toBe('arn:aws:iam::123456789012:role/clawdult-test-agent-role');
     expect(result.instanceProfileArn).toBe(
       'arn:aws:iam::123456789012:instance-profile/clawdult-test-agent-profile'
+    );
+    expect(result.sageMakerRoleName).toBe('clawdult-test-agent-sagemaker-role');
+    expect(result.sageMakerRoleArn).toBe(
+      'arn:aws:iam::123456789012:role/clawdult-test-agent-sagemaker-role'
     );
   }, 15000);
 
@@ -140,6 +151,11 @@ describe('IAM resource naming', () => {
       .mockResolvedValueOnce({})
       // addRoleToInstanceProfile
       .mockResolvedValueOnce({})
+      // ensureSageMakerRole - already exists, then GetRole
+      .mockRejectedValueOnce(alreadyExists)
+      .mockResolvedValueOnce({
+        Role: { Arn: 'arn:aws:iam::123456789012:role/clawdult-my-agent-sagemaker-role' },
+      })
       // waitForInstanceProfileReady
       .mockResolvedValueOnce({
         InstanceProfile: {
@@ -197,6 +213,8 @@ describe('deleteIamResources', () => {
       'DeleteInstanceProfileCommand',
       'DeleteRoleCommand',
       'DeletePolicyCommand',
+      'DeleteRolePolicyCommand',
+      'DeleteRoleCommand',
       'DeletePolicyCommand',
     ]);
   });

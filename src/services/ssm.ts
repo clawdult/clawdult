@@ -528,4 +528,50 @@ export async function getGatewayURL(agentName: string, region: string): Promise<
   }
 }
 
+/**
+ * Store the SageMaker execution role ARN in SSM so the agent can retrieve it.
+ */
+export async function pushSageMakerRoleArnToSSM(
+  agentName: string,
+  region: string,
+  roleArn: string
+): Promise<void> {
+  const client = await createSSMClient(region);
+
+  await putParameter(client, {
+    name: `/clawdult/${agentName}/sagemaker-role-arn`,
+    value: roleArn,
+    type: 'String',
+    agentName,
+  });
+}
+
+/**
+ * Get the SageMaker execution role ARN for an agent from SSM.
+ */
+export async function getSageMakerRoleArn(
+  agentName: string,
+  region: string
+): Promise<string | null> {
+  const client = await createSSMClient(region);
+
+  try {
+    const response = await retryWithBackoff(
+      () =>
+        client.send(
+          new GetParameterCommand({
+            Name: `/clawdult/${agentName}/sagemaker-role-arn`,
+          })
+        ),
+      { transientErrors: SSM_TRANSIENT_ERRORS }
+    );
+    return response.Parameter?.Value ?? null;
+  } catch (error) {
+    if (error instanceof ParameterNotFound) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 export { KEY_NAME_MAP };

@@ -13,6 +13,8 @@ import {
   RemoveRoleFromInstanceProfileCommand,
   ListAttachedRolePoliciesCommand,
   GetRoleCommand,
+  PutRolePolicyCommand,
+  DeleteRolePolicyCommand,
 } from '@aws-sdk/client-iam';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -29,6 +31,8 @@ export interface IamResources {
   roleArn: string;
   policyArn: string;
   boundaryArn: string;
+  sageMakerRoleName: string;
+  sageMakerRoleArn: string;
 }
 
 // Naming convention for IAM resources
@@ -46,6 +50,10 @@ function getBoundaryName(name: string): string {
 
 function getProfileName(name: string): string {
   return `clawdult-${name}-profile`;
+}
+
+function getSageMakerRoleName(name: string): string {
+  return `clawdult-${name}-sagemaker-role`;
 }
 
 async function createIAMClient(region: string): Promise<IAMClient> {
@@ -288,6 +296,83 @@ async function addRoleToInstanceProfile(
   }
 }
 
+async function ensureSageMakerRole(
+  name: string,
+  client: IAMClient,
+  boundaryArn: string
+): Promise<string> {
+  const roleName = getSageMakerRoleName(name);
+
+  const trustPolicy = {
+    Version: '2012-10-17',
+    Statement: [
+      {
+        Effect: 'Allow',
+        Principal: {
+          Service: 'sagemaker.amazonaws.com',
+        },
+        Action: 'sts:AssumeRole',
+      },
+    ],
+  };
+
+  // Inline policy: S3 workspace access + CloudWatch Logs
+  const sageMakerPolicy = {
+    Version: '2012-10-17',
+    Statement: [
+      {
+        Sid: 'S3WorkspaceAccess',
+        Effect: 'Allow',
+        Action: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject', 's3:ListBucket'],
+        Resource: ['arn:aws:s3:::clawdult-workspace-*', 'arn:aws:s3:::clawdult-workspace-*/*'],
+      },
+      {
+        Sid: 'CloudWatchLogsAccess',
+        Effect: 'Allow',
+        Action: [
+          'logs:CreateLogGroup',
+          'logs:CreateLogStream',
+          'logs:PutLogEvents',
+          'logs:DescribeLogStreams',
+        ],
+        Resource: 'arn:aws:logs:*:*:log-group:/aws/sagemaker/*',
+      },
+    ],
+  };
+
+  try {
+    const response = await client.send(
+      new CreateRoleCommand({
+        RoleName: roleName,
+        AssumeRolePolicyDocument: JSON.stringify(trustPolicy),
+        Description: `SageMaker execution role for clawdult workstation ${name}`,
+        PermissionsBoundary: boundaryArn,
+        Tags: [
+          { Key: 'clawdult:managed', Value: 'true' },
+          { Key: 'clawdult:agent', Value: name },
+        ],
+      })
+    );
+
+    // Attach inline policy for S3/CloudWatch access
+    await client.send(
+      new PutRolePolicyCommand({
+        RoleName: roleName,
+        PolicyName: `${roleName}-policy`,
+        PolicyDocument: JSON.stringify(sageMakerPolicy),
+      })
+    );
+
+    return response.Role!.Arn!;
+  } catch (error) {
+    if (error instanceof Error && error.name === 'EntityAlreadyExistsException') {
+      const getResponse = await client.send(new GetRoleCommand({ RoleName: roleName }));
+      return getResponse.Role!.Arn!;
+    }
+    throw error;
+  }
+}
+
 async function waitForInstanceProfileReady(
   profileName: string,
   client: IAMClient,
@@ -362,6 +447,10 @@ export async function ensureIamResources(name: string, region: string): Promise<
   const profileName = getProfileName(name);
   await retryWithBackoff(() => addRoleToInstanceProfile(roleName, profileName, client));
 
+  // Create SageMaker execution role (for GPU training job dispatch)
+  const sageMakerRoleName = getSageMakerRoleName(name);
+  const sageMakerRoleArn = await ensureSageMakerRole(name, client, boundaryArn);
+
   // Wait for IAM propagation
   await waitForInstanceProfileReady(profileName, client);
 
@@ -372,6 +461,8 @@ export async function ensureIamResources(name: string, region: string): Promise<
     roleArn,
     policyArn,
     boundaryArn,
+    sageMakerRoleName,
+    sageMakerRoleArn,
   };
 }
 
@@ -465,7 +556,34 @@ export async function deleteIamResources(name: string, region: string): Promise<
     }
   }
 
-  // 6. Delete permission boundary
+  // 6. Delete SageMaker execution role (inline policy + role)
+  const sageMakerRoleName = getSageMakerRoleName(name);
+  try {
+    await client.send(
+      new DeleteRolePolicyCommand({
+        RoleName: sageMakerRoleName,
+        PolicyName: `${sageMakerRoleName}-policy`,
+      })
+    );
+  } catch (error) {
+    if (!(error instanceof Error && error.name === 'NoSuchEntityException')) {
+      throw error;
+    }
+  }
+
+  try {
+    await client.send(
+      new DeleteRoleCommand({
+        RoleName: sageMakerRoleName,
+      })
+    );
+  } catch (error) {
+    if (!(error instanceof Error && error.name === 'NoSuchEntityException')) {
+      throw error;
+    }
+  }
+
+  // 7. Delete permission boundary
   try {
     await client.send(
       new DeletePolicyCommand({

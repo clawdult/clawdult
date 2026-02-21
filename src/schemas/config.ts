@@ -80,3 +80,26 @@ export const ToolsConfigSchema = z.object({
 });
 
 export type ToolsConfig = z.infer<typeof ToolsConfigSchema>;
+
+export const WorkstationSnapshotSchema = z.object({
+  name: z
+    .string()
+    .min(1)
+    .max(50)
+    .regex(/^[a-zA-Z0-9-_]+$/),
+  createdAt: z.string().datetime(),
+  description: z.string().optional(),
+  amiId: z.string().regex(/^ami-[a-f0-9]+$/),
+  amiRegion: RegionSchema,
+  sourceWorkstationName: z.string(),
+  sourceInstanceId: z.string(),
+  instanceType: InstanceTypeSchema,
+  region: RegionSchema,
+  volumeSize: z.number().int().min(20).max(500),
+  keyProfileName: z.string().optional(),
+  connectivityProfileName: z.string().optional(),
+  githubAgentUsername: z.string().optional(),
+  tags: z.record(z.string()).optional(),
+});
+
+export type WorkstationSnapshot = z.infer<typeof WorkstationSnapshotSchema>;

@@ -14,6 +14,9 @@ import { secretsCommand } from './commands/secrets.js';
 import { completionCommand } from './commands/completion.js';
 import { profilesCommand } from './commands/profiles/index.js';
 import { gatewayCommand } from './commands/gateway.js';
+import { resizeCommand } from './commands/resize.js';
+import { cloneCommand } from './commands/clone.js';
+import { snapshotsCommand } from './commands/snapshots/index.js';
 import { handleCompletion } from './completion/index.js';
 import chalk from 'chalk';
 import { CLIError } from './utils/errors.js';
@@ -43,6 +46,9 @@ program.addCommand(setupAdminCommand);
 program.addCommand(secretsCommand);
 program.addCommand(profilesCommand);
 program.addCommand(gatewayCommand);
+program.addCommand(resizeCommand);
+program.addCommand(cloneCommand);
+program.addCommand(snapshotsCommand);
 program.addCommand(completionCommand);
 
 program.parseAsync().catch((error: unknown) => {

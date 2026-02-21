@@ -13,7 +13,10 @@ import {
   RemoveRoleFromInstanceProfileCommand,
   ListAttachedRolePoliciesCommand,
   GetRoleCommand,
+  ListPolicyVersionsCommand,
+  DeletePolicyVersionCommand,
 } from '@aws-sdk/client-iam';
+import type { IamStatement } from '../schemas/config.js';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,6 +49,10 @@ function getBoundaryName(name: string): string {
 
 function getProfileName(name: string): string {
   return `clawdult-${name}-profile`;
+}
+
+function getCustomPolicyName(name: string): string {
+  return `clawdult-${name}-custom-policy`;
 }
 
 async function createIAMClient(region: string): Promise<IAMClient> {
@@ -465,13 +472,143 @@ export async function deleteIamResources(name: string, region: string): Promise<
     }
   }
 
-  // 6. Delete permission boundary
+  // 6. Delete custom policy (if any)
+  const customPolicyArn = `arn:aws:iam::${accountId}:policy/${getCustomPolicyName(name)}`;
+  try {
+    await client.send(
+      new DeletePolicyCommand({
+        PolicyArn: customPolicyArn,
+      })
+    );
+  } catch (error) {
+    if (!(error instanceof Error && error.name === 'NoSuchEntityException')) {
+      throw error;
+    }
+  }
+
+  // 7. Delete permission boundary
   try {
     await client.send(
       new DeletePolicyCommand({
         PolicyArn: boundaryArn,
       })
     );
+  } catch (error) {
+    if (!(error instanceof Error && error.name === 'NoSuchEntityException')) {
+      throw error;
+    }
+  }
+}
+
+/**
+ * Attach custom IAM permissions to a workstation's role.
+ * Idempotent: if the policy already exists, it is deleted and recreated.
+ */
+export async function attachCustomPermissions(
+  workstationName: string,
+  region: string,
+  statements: IamStatement[]
+): Promise<void> {
+  const client = await createIAMClient(region);
+  const accountId = await getAccountId(region);
+  const customPolicyName = getCustomPolicyName(workstationName);
+  const customPolicyArn = `arn:aws:iam::${accountId}:policy/${customPolicyName}`;
+  const roleName = getRoleName(workstationName);
+
+  const policyDocument = JSON.stringify({
+    Version: '2012-10-17',
+    Statement: statements,
+  });
+
+  // Delete existing policy if present (handles updates)
+  try {
+    await client.send(
+      new DetachRolePolicyCommand({
+        RoleName: roleName,
+        PolicyArn: customPolicyArn,
+      })
+    );
+  } catch (error) {
+    if (!(error instanceof Error && error.name === 'NoSuchEntityException')) {
+      throw error;
+    }
+  }
+
+  try {
+    // Delete all non-default policy versions before deleting the policy
+    const versions = await client.send(
+      new ListPolicyVersionsCommand({ PolicyArn: customPolicyArn })
+    );
+    for (const version of versions.Versions || []) {
+      if (!version.IsDefaultVersion) {
+        await client.send(
+          new DeletePolicyVersionCommand({
+            PolicyArn: customPolicyArn,
+            VersionId: version.VersionId!,
+          })
+        );
+      }
+    }
+    await client.send(new DeletePolicyCommand({ PolicyArn: customPolicyArn }));
+  } catch (error) {
+    if (!(error instanceof Error && error.name === 'NoSuchEntityException')) {
+      throw error;
+    }
+  }
+
+  // Create the policy
+  await client.send(
+    new CreatePolicyCommand({
+      PolicyName: customPolicyName,
+      PolicyDocument: policyDocument,
+      Description: `Custom permissions for clawdult workstation ${workstationName}`,
+      Tags: [
+        { Key: 'clawdult:managed', Value: 'true' },
+        { Key: 'clawdult:agent', Value: workstationName },
+      ],
+    })
+  );
+
+  // Attach to role
+  await client.send(
+    new AttachRolePolicyCommand({
+      RoleName: roleName,
+      PolicyArn: customPolicyArn,
+    })
+  );
+}
+
+/**
+ * Detach and delete custom IAM permissions from a workstation's role.
+ * Idempotent: ignores NoSuchEntity errors.
+ */
+export async function detachCustomPermissions(
+  workstationName: string,
+  region: string
+): Promise<void> {
+  const client = await createIAMClient(region);
+  const accountId = await getAccountId(region);
+  const customPolicyName = getCustomPolicyName(workstationName);
+  const customPolicyArn = `arn:aws:iam::${accountId}:policy/${customPolicyName}`;
+  const roleName = getRoleName(workstationName);
+
+  // Detach from role
+  try {
+    await client.send(
+      new DetachRolePolicyCommand({
+        RoleName: roleName,
+        PolicyArn: customPolicyArn,
+      })
+    );
+  } catch (error) {
+    if (!(error instanceof Error && error.name === 'NoSuchEntityException')) {
+      throw error;
+    }
+  }
+
+  // Delete policy
+  try {
+    await client.send(new DeletePolicyCommand({ PolicyArn: customPolicyArn }));
   } catch (error) {
     if (!(error instanceof Error && error.name === 'NoSuchEntityException')) {
       throw error;

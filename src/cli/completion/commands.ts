@@ -12,6 +12,7 @@ export const COMMANDS = [
   { name: 'resize', description: 'Change instance type of a workstation' },
   { name: 'clone', description: 'Create a copy of a workstation' },
   { name: 'snapshots', description: 'Save and restore workstation snapshots' },
+  { name: 'permissions', description: 'Manage custom IAM permissions on workstations' },
   { name: 'config', description: 'Manage configuration' },
   { name: 'setup-admin', description: 'Set up admin prerequisites' },
   { name: 'keys', description: 'Manage SSH keys' },

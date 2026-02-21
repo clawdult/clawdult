@@ -17,6 +17,7 @@ import { gatewayCommand } from './commands/gateway.js';
 import { resizeCommand } from './commands/resize.js';
 import { cloneCommand } from './commands/clone.js';
 import { snapshotsCommand } from './commands/snapshots/index.js';
+import { permissionsCommand } from './commands/permissions.js';
 import { handleCompletion } from './completion/index.js';
 import chalk from 'chalk';
 import { CLIError } from './utils/errors.js';
@@ -49,6 +50,7 @@ program.addCommand(gatewayCommand);
 program.addCommand(resizeCommand);
 program.addCommand(cloneCommand);
 program.addCommand(snapshotsCommand);
+program.addCommand(permissionsCommand);
 program.addCommand(completionCommand);
 
 program.parseAsync().catch((error: unknown) => {

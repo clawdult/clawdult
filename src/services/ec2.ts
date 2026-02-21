@@ -17,6 +17,7 @@ import {
   CreateKeyPairCommand,
   DescribeKeyPairsCommand,
   CreateTagsCommand,
+  DeleteTagsCommand,
   type RunInstancesCommandInput,
   type _InstanceType,
   type Instance,
@@ -40,6 +41,7 @@ export interface LaunchOptions {
   amiId?: string;
   // Metadata tags
   keyProfileName?: string;
+  permissionsProfileName?: string;
   githubAgentUsername?: string;
 }
 
@@ -55,6 +57,7 @@ export interface ManagedInstance {
   // Metadata from tags
   name: string;
   keyProfileName?: string;
+  permissionsProfileName?: string;
   githubAgentUsername?: string;
 }
 
@@ -187,6 +190,9 @@ export async function launchInstance(options: LaunchOptions): Promise<LaunchResu
           { Key: 'clawdult:managed', Value: 'true' },
           ...(options.keyProfileName
             ? [{ Key: 'clawdult:keyProfileName', Value: options.keyProfileName }]
+            : []),
+          ...(options.permissionsProfileName
+            ? [{ Key: 'clawdult:permissionsProfileName', Value: options.permissionsProfileName }]
             : []),
           ...(options.githubAgentUsername
             ? [{ Key: 'clawdult:githubAgentUsername', Value: options.githubAgentUsername }]
@@ -503,6 +509,7 @@ function parseInstanceToManaged(instance: Instance, region: string): ManagedInst
     region,
     name,
     keyProfileName: getTag('clawdult:keyProfileName'),
+    permissionsProfileName: getTag('clawdult:permissionsProfileName'),
     githubAgentUsername: getTag('clawdult:githubAgentUsername'),
   };
 }
@@ -575,6 +582,35 @@ export async function getManagedInstance(
 export async function terminateInstance(instanceId: string, region: string): Promise<void> {
   const client = await createEC2Client(region);
   await client.send(new TerminateInstancesCommand({ InstanceIds: [instanceId] }));
+}
+
+export async function setInstanceTag(
+  instanceId: string,
+  region: string,
+  key: string,
+  value: string
+): Promise<void> {
+  const client = await createEC2Client(region);
+  await client.send(
+    new CreateTagsCommand({
+      Resources: [instanceId],
+      Tags: [{ Key: key, Value: value }],
+    })
+  );
+}
+
+export async function deleteInstanceTag(
+  instanceId: string,
+  region: string,
+  key: string
+): Promise<void> {
+  const client = await createEC2Client(region);
+  await client.send(
+    new DeleteTagsCommand({
+      Resources: [instanceId],
+      Tags: [{ Key: key }],
+    })
+  );
 }
 
 const SECURITY_GROUP_NAME = 'clawdult-ssh';

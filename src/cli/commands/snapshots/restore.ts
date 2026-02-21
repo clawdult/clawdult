@@ -14,7 +14,12 @@ import {
   type InstanceStatus,
 } from '../../../services/ec2.js';
 import { loadGlobalConfig } from '../../../services/config.js';
-import { ensureIamResources, deleteIamResources } from '../../../services/iam.js';
+import {
+  ensureIamResources,
+  deleteIamResources,
+  attachCustomPermissions,
+} from '../../../services/iam.js';
+import { getPermissionsProfile } from '../../../services/permissions-profiles.js';
 import {
   pushKeyProfileToSSM,
   pushGitHubCredentialsToSSM,
@@ -206,6 +211,30 @@ export const restoreCommand = new Command('restore')
         }
       }
 
+      // Re-attach custom permissions if snapshot had them
+      if (snapshot.permissionsProfileName) {
+        const permSpinner = ora(
+          `Attaching permissions profile '${snapshot.permissionsProfileName}'...`
+        ).start();
+        try {
+          const permProfile = await getPermissionsProfile(snapshot.permissionsProfileName);
+          if (permProfile) {
+            await attachCustomPermissions(workstationName, targetRegion, permProfile.statements);
+            permSpinner.succeed(
+              `Permissions profile '${snapshot.permissionsProfileName}' attached`
+            );
+          } else {
+            permSpinner.warn(
+              `Permissions profile '${snapshot.permissionsProfileName}' not found locally, skipping`
+            );
+          }
+        } catch (error) {
+          permSpinner.warn(
+            `Failed to attach permissions: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }
+
       // Launch instance
       const launchSpinner = ora('Launching instance from snapshot...').start();
       const launchResult = await launchInstance({
@@ -218,6 +247,7 @@ export const restoreCommand = new Command('restore')
         keyName: globalConfig.sshKeyName,
         iamInstanceProfile: iamResources.instanceProfileName,
         keyProfileName: snapshot.keyProfileName,
+        permissionsProfileName: snapshot.permissionsProfileName,
         githubAgentUsername: snapshot.githubAgentUsername,
       });
       instanceId = launchResult.instanceId;

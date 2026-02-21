@@ -99,6 +99,7 @@ export const saveCommand = new Command('save')
         region: instance.region as Region,
         volumeSize,
         keyProfileName: instance.keyProfileName,
+        permissionsProfileName: instance.permissionsProfileName,
         githubAgentUsername: instance.githubAgentUsername,
       };
 

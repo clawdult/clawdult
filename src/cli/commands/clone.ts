@@ -13,7 +13,12 @@ import {
   type InstanceStatus,
 } from '../../services/ec2.js';
 import { getAWSClientConfig } from '../../services/aws-client.js';
-import { ensureIamResources, deleteIamResources } from '../../services/iam.js';
+import {
+  ensureIamResources,
+  deleteIamResources,
+  attachCustomPermissions,
+} from '../../services/iam.js';
+import { getPermissionsProfile } from '../../services/permissions-profiles.js';
 import { copySSMParameters } from '../../services/ssm.js';
 import { requireAwsCredentials } from '../utils/require-aws.js';
 import { resolveInstance } from '../utils/instance-resolver.js';
@@ -153,7 +158,29 @@ export const cloneCommand = new Command('clone')
         volumeSize = volResponse.Volumes?.[0]?.Size || 50;
       }
 
-      // 5. Launch new instance from AMI
+      // 5. Propagate custom permissions if source had them
+      if (source.permissionsProfileName) {
+        const permSpinner = ora(
+          `Attaching permissions profile '${source.permissionsProfileName}'...`
+        ).start();
+        try {
+          const permProfile = await getPermissionsProfile(source.permissionsProfileName);
+          if (permProfile) {
+            await attachCustomPermissions(newName, source.region, permProfile.statements);
+            permSpinner.succeed(`Permissions profile '${source.permissionsProfileName}' attached`);
+          } else {
+            permSpinner.warn(
+              `Permissions profile '${source.permissionsProfileName}' not found locally, skipping`
+            );
+          }
+        } catch (error) {
+          permSpinner.warn(
+            `Failed to attach permissions: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }
+
+      // 6. Launch new instance from AMI
       const launchSpinner = ora('Launching cloned instance...').start();
       const launchResult = await launchInstance({
         name: newName,
@@ -165,12 +192,13 @@ export const cloneCommand = new Command('clone')
         keyName,
         iamInstanceProfile: iamResources.instanceProfileName,
         keyProfileName: source.keyProfileName,
+        permissionsProfileName: source.permissionsProfileName,
         githubAgentUsername: source.githubAgentUsername,
       });
       instanceId = launchResult.instanceId;
       launchSpinner.succeed(`Instance launched: ${instanceId}`);
 
-      // 6. Wait for running
+      // 7. Wait for running
       const waitSpinner = ora('Waiting for instance to start...').start();
       const finalStatus = await waitForInstanceRunning(instanceId, source.region, {
         onProgress: (status: InstanceStatus) => {

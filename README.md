@@ -4,7 +4,7 @@
 
 Deploy dedicated EC2 instances as isolated environments for AI agents—complete with audit logging, permission boundaries, and multi-channel messaging. Think of it as giving your AI teammates their own secure machines to work from. Also assists in allocation of communication channels and tools as a team member rather than impersonating a human user (unless you want it to).
 
-<img width="196" height="292" alt="image" src="https://github.com/user-attachments/assets/c2047bc9-9466-451b-a06d-7d76484b63bc" />
+<img width="196" height="292" alt="Clawdult lobster" src="assets/lobster.png" />
 
 ## Philosophy
 

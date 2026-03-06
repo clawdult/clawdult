@@ -94,6 +94,30 @@ export const WorkstationTypeSchema = z.object({
 
 export type WorkstationType = z.infer<typeof WorkstationTypeSchema>;
 
+export const RepoSchema = z.object({
+  url: z.string(),
+  branch: z.string().optional(),
+  path: z.string().optional(),
+});
+
+export type Repo = z.infer<typeof RepoSchema>;
+
+export const AgentInstructionsSchema = z.object({
+  purpose: z.string().optional(),
+  instructions: z.string().optional(),
+  repos: z.array(RepoSchema).default([]),
+  cron: z
+    .array(
+      z.object({
+        schedule: z.string(),
+        command: z.string(),
+      })
+    )
+    .default([]),
+});
+
+export type AgentInstructions = z.infer<typeof AgentInstructionsSchema>;
+
 export const SageMakerInstanceTypeSchema = z.enum([
   'ml.g4dn.xlarge',
   'ml.g4dn.2xlarge',

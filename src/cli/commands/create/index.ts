@@ -10,7 +10,11 @@ import {
   getConfiguredDescription as getConnectivityDescription,
   validateConnectivity,
 } from '../../../services/connectivity-profiles.js';
-import type { GitHubAgentAccount, WorkstationType } from '../../../schemas/config.js';
+import type {
+  AgentInstructions,
+  GitHubAgentAccount,
+  WorkstationType,
+} from '../../../schemas/config.js';
 import { GO_BACK } from '../../utils/wizard.js';
 import { requireAwsCredentials } from '../../utils/require-aws.js';
 import {
@@ -19,6 +23,7 @@ import {
   handleConnectivityProfile,
   handleGitHubAgent,
   handleInfrastructure,
+  handleInstructions,
   type InfrastructureResult,
 } from './wizard-steps.js';
 import { provisionWorkstation } from './provisioner.js';
@@ -122,12 +127,19 @@ export const createCommand = new Command('create')
     }
 
     // Build step list based on what's not skipped
-    type StepName = 'workstationType' | 'keyProfile' | 'github' | 'connectivity' | 'infrastructure';
+    type StepName =
+      | 'workstationType'
+      | 'keyProfile'
+      | 'github'
+      | 'connectivity'
+      | 'instructions'
+      | 'infrastructure';
     const steps: StepName[] = [];
     steps.push('workstationType');
     if (!options.skipKeys) steps.push('keyProfile');
     if (!options.skipGithub) steps.push('github');
     if (!options.skipConnectivity) steps.push('connectivity');
+    steps.push('instructions');
     steps.push('infrastructure');
 
     // Accumulated state from each step (object so TypeScript doesn't narrow through closures)
@@ -136,6 +148,7 @@ export const createCommand = new Command('create')
       keyProfile: null as KeyProfile | null,
       github: null as GitHubAgentAccount | null,
       connectivity: null as ConnectivityProfile | null,
+      instructions: null as AgentInstructions | null,
       infrastructure: null as InfrastructureResult | null,
     };
 
@@ -172,6 +185,13 @@ export const createCommand = new Command('create')
           const result = await handleConnectivityProfile(options.connectivityProfile, allowBack);
           if (result === GO_BACK) return false;
           wizardState.connectivity = result;
+          return true;
+        }
+        case 'instructions': {
+          console.log(chalk.bold(`STEP ${displayNum}: Agent Instructions\n`));
+          const instrResult = await handleInstructions(allowBack);
+          if (instrResult === GO_BACK) return false;
+          wizardState.instructions = instrResult;
           return true;
         }
         case 'infrastructure': {
@@ -218,7 +238,12 @@ export const createCommand = new Command('create')
       );
       console.log(
         chalk.dim(
-          `  Connectivity:  ${wizardState.connectivity ? `${wizardState.connectivity.name} (${getConnectivityDescription(wizardState.connectivity)})` : 'None'}\n`
+          `  Connectivity:  ${wizardState.connectivity ? `${wizardState.connectivity.name} (${getConnectivityDescription(wizardState.connectivity)})` : 'None'}`
+        )
+      );
+      console.log(
+        chalk.dim(
+          `  Instructions:  ${wizardState.instructions ? wizardState.instructions.purpose || 'configured' : 'None'}\n`
         )
       );
 
@@ -284,6 +309,7 @@ export const createCommand = new Command('create')
       keyProfile: wizardState.keyProfile,
       github: wizardState.github,
       connectivity: wizardState.connectivity,
+      instructions: wizardState.instructions,
       globalConfig,
       enableAutoSSH,
     });

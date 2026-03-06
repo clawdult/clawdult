@@ -4,7 +4,12 @@ import ora from 'ora';
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { WorkstationConfigSchema } from '../../../schemas/config.js';
-import type { GlobalConfig, GitHubAgentAccount, WorkstationType } from '../../../schemas/config.js';
+import type {
+  AgentInstructions,
+  GlobalConfig,
+  GitHubAgentAccount,
+  WorkstationType,
+} from '../../../schemas/config.js';
 import type { KeyProfile } from '../../../services/key-profiles.js';
 import type { ConnectivityProfile } from '../../../services/connectivity-profiles.js';
 import type { InfrastructureResult } from './wizard-steps.js';
@@ -14,6 +19,7 @@ import {
   pushConnectivityProfileToSSM,
   pushSageMakerRoleArnToSSM,
   pushWorkstationTypeToSSM,
+  pushAgentInstructionsToSSM,
   getTailscaleIP,
 } from '../../../services/ssm.js';
 import {
@@ -94,6 +100,7 @@ export async function provisionWorkstation(params: {
   keyProfile: KeyProfile | null;
   github: GitHubAgentAccount | null;
   connectivity: ConnectivityProfile | null;
+  instructions: AgentInstructions | null;
   globalConfig: GlobalConfig;
   enableAutoSSH: boolean;
 }): Promise<void> {
@@ -104,6 +111,7 @@ export async function provisionWorkstation(params: {
     keyProfile: selectedKeyProfile,
     github: selectedGitHubAgent,
     connectivity: selectedConnectivityProfile,
+    instructions,
     globalConfig,
     enableAutoSSH,
   } = params;
@@ -385,6 +393,22 @@ export async function provisionWorkstation(params: {
           chalk.dim('  Use --skip-connectivity to create workstation without connectivity profile')
         );
         throw new Error('Failed to push connectivity profile to SSM');
+      }
+    }
+
+    if (instructions) {
+      const instrSpinner = ora('Pushing agent instructions to SSM...').start();
+      try {
+        await pushAgentInstructionsToSSM(config.name, config.region, instructions);
+        instrSpinner.succeed(
+          `Pushed agent instructions${instructions.purpose ? `: ${instructions.purpose}` : ''}`
+        );
+      } catch (error) {
+        instrSpinner.fail('Failed to push agent instructions to SSM');
+        console.error(
+          chalk.red(`  Error: ${error instanceof Error ? error.message : String(error)}`)
+        );
+        throw new Error('Failed to push agent instructions to SSM');
       }
     }
 

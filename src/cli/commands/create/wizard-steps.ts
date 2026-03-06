@@ -2,7 +2,12 @@ import { select, input } from '@inquirer/prompts';
 import chalk from 'chalk';
 import ora from 'ora';
 import { InstanceTypeSchema, RegionSchema } from '../../../schemas/config.js';
-import type { GitHubAgentAccount, GlobalConfig, WorkstationType } from '../../../schemas/config.js';
+import type {
+  AgentInstructions,
+  GitHubAgentAccount,
+  GlobalConfig,
+  WorkstationType,
+} from '../../../schemas/config.js';
 import { GO_BACK, type StepResult } from '../../utils/wizard.js';
 import {
   listKeyProfiles,
@@ -382,4 +387,65 @@ export async function handleInfrastructure(
     );
 
   return { instanceType, region, volumeSize };
+}
+
+export async function handleInstructions(
+  allowBack: boolean
+): Promise<StepResult<AgentInstructions | null>> {
+  const action = await select({
+    message: 'Configure agent instructions?',
+    choices: [
+      { value: 'skip', name: 'Skip (configure later)' },
+      { value: 'configure', name: 'Set purpose, repos, and instructions' },
+      ...(allowBack ? [{ value: '__back__', name: '<< Go back' }] : []),
+    ],
+  });
+
+  if (action === '__back__') return GO_BACK;
+  if (action === 'skip') {
+    console.log(chalk.dim('Continuing without agent instructions\n'));
+    return null;
+  }
+
+  const purpose = await input({
+    message: 'Agent purpose (one-line description, or skip):',
+  });
+
+  const reposInput = await input({
+    message: 'Repos to clone (comma-separated owner/repo, or skip):',
+  });
+
+  const repos = reposInput
+    .split(',')
+    .map((r) => r.trim())
+    .filter(Boolean)
+    .map((url) => ({ url }));
+
+  const instructionsInput = await input({
+    message: 'Instructions file path or inline text (or skip):',
+  });
+
+  let instructions: string | undefined;
+  if (instructionsInput.trim()) {
+    instructions = instructionsInput.trim();
+    // Normalize file paths to file: prefix
+    if (
+      !instructions.startsWith('file:') &&
+      (instructions.endsWith('.md') ||
+        instructions.startsWith('./') ||
+        instructions.startsWith('/'))
+    ) {
+      instructions = `file:${instructions}`;
+    }
+  }
+
+  const result: AgentInstructions = {
+    ...(purpose ? { purpose } : {}),
+    ...(instructions ? { instructions } : {}),
+    repos,
+    cron: [],
+  };
+
+  console.log(chalk.green('✓') + ' Agent instructions configured\n');
+  return result;
 }

@@ -7,7 +7,9 @@ import {
   ParameterNotFound,
 } from '@aws-sdk/client-ssm';
 import { getSecret } from './secrets.js';
-import type { GitHubAgentAccount } from '../schemas/config.js';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import type { GitHubAgentAccount, AgentInstructions } from '../schemas/config.js';
 import { getAgentToken } from './github-agent.js';
 import { getAWSClientConfig } from './aws-client.js';
 import { retryWithBackoff } from './aws-retry.js';
@@ -587,6 +589,28 @@ export async function pushWorkstationTypeToSSM(
   await putParameter(client, {
     name: `/clawdult/${agentName}/workstation-type`,
     value: JSON.stringify(workstationType),
+    type: 'String',
+    agentName,
+  });
+}
+
+export async function pushAgentInstructionsToSSM(
+  agentName: string,
+  region: string,
+  instructions: AgentInstructions
+): Promise<void> {
+  const client = await createSSMClient(region);
+
+  // Resolve file: references to inline content
+  const resolved = { ...instructions };
+  if (resolved.instructions?.startsWith('file:')) {
+    const filePath = path.resolve(resolved.instructions.slice(5));
+    resolved.instructions = await fs.readFile(filePath, 'utf-8');
+  }
+
+  await putParameter(client, {
+    name: `/clawdult/${agentName}/agent-instructions`,
+    value: JSON.stringify(resolved),
     type: 'String',
     agentName,
   });

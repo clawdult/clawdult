@@ -101,9 +101,71 @@ export const createCommand = new Command('create')
   .option('--skip-connectivity', 'Skip connectivity profile step')
   .option('--connectivity-profile <name>', 'Use a specific connectivity profile')
   .option('--workstation-type <type>', 'Workstation type (e.g., general-purpose, data-science)')
+  .option('--spec <name>', 'Provision from a saved agent spec')
+  .option('--spec-file <path>', 'Provision from a YAML spec file')
   .option('--dry-run', 'Show what would be created without actually creating')
   .option('--no-ssh', 'Skip auto-SSH into workstation after creation')
   .action(async (providedName: string | undefined, options) => {
+    // Handle --spec or --spec-file: skip wizard entirely
+    if (options.spec || options.specFile) {
+      const { resolveAgentSpec } = await import('../../../services/agent-spec-resolver.js');
+
+      let spec;
+      if (options.specFile) {
+        const { loadAgentSpecFile } = await import('../../../services/agent-specs.js');
+        spec = await loadAgentSpecFile(options.specFile);
+      } else {
+        const { getAgentSpec } = await import('../../../services/agent-specs.js');
+        spec = await getAgentSpec(options.spec);
+        if (!spec) {
+          console.error(chalk.red(`Spec '${options.spec}' not found.`));
+          const { listAgentSpecs } = await import('../../../services/agent-specs.js');
+          const available = await listAgentSpecs();
+          if (available.length > 0) {
+            console.log(chalk.dim(`Available specs: ${available.map((s) => s.name).join(', ')}`));
+          }
+          process.exit(1);
+        }
+      }
+
+      // Allow name override from CLI argument
+      const specName = providedName ?? spec.name;
+
+      await requireAwsCredentials();
+      const globalConfig = await loadGlobalConfig();
+      const resolved = await resolveAgentSpec(spec, globalConfig);
+
+      console.log(chalk.bold(`\nProvisioning from spec: ${spec.name}\n`));
+      console.log(chalk.dim(`  Name:          ${specName}`));
+      console.log(chalk.dim(`  Type:          ${resolved.workstationType.name}`));
+      console.log(chalk.dim(`  Instance:      ${resolved.infrastructure.instanceType}`));
+      console.log(chalk.dim(`  Region:        ${resolved.infrastructure.region}`));
+      console.log(chalk.dim(`  Key Profile:   ${resolved.keyProfile?.name ?? 'None'}`));
+      console.log(chalk.dim(`  GitHub:        ${resolved.github?.username ?? 'None'}`));
+      console.log(chalk.dim(`  Connectivity:  ${resolved.connectivity?.name ?? 'None'}`));
+      console.log(chalk.dim(`  Instructions:  ${resolved.instructions?.purpose ?? 'None'}\n`));
+
+      if (options.dryRun) {
+        console.log(chalk.yellow('Dry run mode - no resources will be created.\n'));
+        console.log(chalk.green('✓ Spec is valid'));
+        return;
+      }
+
+      const enableAutoSSH = options.ssh ?? true;
+      await provisionWorkstation({
+        name: specName,
+        workstationType: resolved.workstationType,
+        infrastructure: resolved.infrastructure,
+        keyProfile: resolved.keyProfile,
+        github: resolved.github,
+        connectivity: resolved.connectivity,
+        instructions: resolved.instructions,
+        globalConfig,
+        enableAutoSSH,
+      });
+      return;
+    }
+
     const name = providedName ?? generateRandomName();
     console.log(chalk.bold('\n┌──────────────────────────────────────────────────────────────┐'));
     console.log(chalk.bold('│              CLAWDULT WORKSTATION PROVISIONER                │'));

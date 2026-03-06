@@ -118,6 +118,22 @@ export const AgentInstructionsSchema = z.object({
 
 export type AgentInstructions = z.infer<typeof AgentInstructionsSchema>;
 
+export const AgentSpecSchema = z.object({
+  name: z.string().regex(/^[a-z][a-z0-9-]*[a-z0-9]$/),
+  workstationType: z.string(),
+  keyProfile: z.string().optional(),
+  connectivityProfile: z.string().optional(),
+  budgetProfile: z.string().optional(),
+  github: z.string().optional(),
+  instanceType: InstanceTypeSchema.optional(),
+  region: RegionSchema.optional(),
+  volumeSize: z.number().int().min(20).max(500).optional(),
+  instructions: AgentInstructionsSchema.optional(),
+  tags: z.record(z.string()).optional(),
+});
+
+export type AgentSpec = z.infer<typeof AgentSpecSchema>;
+
 export const SageMakerInstanceTypeSchema = z.enum([
   'ml.g4dn.xlarge',
   'ml.g4dn.2xlarge',

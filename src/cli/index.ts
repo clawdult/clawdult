@@ -15,6 +15,7 @@ import { completionCommand } from './commands/completion.js';
 import { profilesCommand } from './commands/profiles/index.js';
 import { gatewayCommand } from './commands/gateway.js';
 import { trainCommand } from './commands/train.js';
+import { specsCommand } from './commands/specs.js';
 import { handleCompletion } from './completion/index.js';
 import chalk from 'chalk';
 import { CLIError } from './utils/errors.js';
@@ -45,6 +46,7 @@ program.addCommand(secretsCommand);
 program.addCommand(profilesCommand);
 program.addCommand(gatewayCommand);
 program.addCommand(trainCommand);
+program.addCommand(specsCommand);
 program.addCommand(completionCommand);
 
 program.parseAsync().catch((error: unknown) => {

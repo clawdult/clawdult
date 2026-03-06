@@ -4,7 +4,7 @@ import ora from 'ora';
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { WorkstationConfigSchema } from '../../../schemas/config.js';
-import type { GlobalConfig, GitHubAgentAccount } from '../../../schemas/config.js';
+import type { GlobalConfig, GitHubAgentAccount, WorkstationType } from '../../../schemas/config.js';
 import type { KeyProfile } from '../../../services/key-profiles.js';
 import type { ConnectivityProfile } from '../../../services/connectivity-profiles.js';
 import type { InfrastructureResult } from './wizard-steps.js';
@@ -13,6 +13,7 @@ import {
   pushGitHubCredentialsToSSM,
   pushConnectivityProfileToSSM,
   pushSageMakerRoleArnToSSM,
+  pushWorkstationTypeToSSM,
   getTailscaleIP,
 } from '../../../services/ssm.js';
 import {
@@ -88,6 +89,7 @@ function showManualConnectionInstructions(
 
 export async function provisionWorkstation(params: {
   name: string;
+  workstationType: WorkstationType;
   infrastructure: InfrastructureResult;
   keyProfile: KeyProfile | null;
   github: GitHubAgentAccount | null;
@@ -97,6 +99,7 @@ export async function provisionWorkstation(params: {
 }): Promise<void> {
   const {
     name,
+    workstationType,
     infrastructure,
     keyProfile: selectedKeyProfile,
     github: selectedGitHubAgent,
@@ -270,16 +273,36 @@ export async function provisionWorkstation(params: {
 
     // Create IAM role and instance profile AFTER SSH key selection
     // Now all interactive prompts are done - safe to create IAM resources
+    const capabilities = workstationType.capabilities;
     const iamSpinner = ora('Creating IAM role and instance profile...').start();
     let instanceProfileName: string;
     try {
-      const iamResources = await ensureIamResources(config.name, config.region);
+      const iamResources = await ensureIamResources(config.name, config.region, capabilities);
       instanceProfileName = iamResources.instanceProfileName;
       resources.iamResourcesName = config.name;
-      iamSpinner.succeed('IAM role, instance profile, and SageMaker role ready');
 
-      // Store SageMaker role ARN in SSM so the agent can discover it
-      await pushSageMakerRoleArnToSSM(config.name, config.region, iamResources.sageMakerRoleArn);
+      const extraRoleNames = iamResources.extraRoles.map((r) => r.type);
+      if (extraRoleNames.length > 0) {
+        iamSpinner.succeed(
+          `IAM role, instance profile, and ${extraRoleNames.join(', ')} role(s) ready`
+        );
+      } else {
+        iamSpinner.succeed('IAM role and instance profile ready');
+      }
+
+      // Store extra role ARNs in SSM so the agent can discover them
+      for (const extra of iamResources.extraRoles) {
+        if (extra.type === 'sagemaker') {
+          await pushSageMakerRoleArnToSSM(config.name, config.region, extra.roleArn);
+        }
+      }
+
+      // Store workstation type in SSM
+      await pushWorkstationTypeToSSM(config.name, config.region, {
+        name: workstationType.name,
+        capabilities: workstationType.capabilities,
+        tools: workstationType.tools,
+      });
     } catch (error) {
       iamSpinner.fail('Failed to create IAM resources');
       throw new Error(error instanceof Error ? error.message : String(error));
@@ -378,6 +401,8 @@ export async function provisionWorkstation(params: {
       iamInstanceProfile: instanceProfileName,
       keyProfileName: selectedKeyProfile?.name,
       githubAgentUsername: selectedGitHubAgent?.username,
+      workstationTypeName: workstationType.name,
+      capabilities: workstationType.capabilities,
     });
 
     resources.instanceId = launchResult.instanceId;

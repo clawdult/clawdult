@@ -34,6 +34,8 @@ export interface LaunchOptions {
   // Metadata tags
   keyProfileName?: string;
   githubAgentUsername?: string;
+  workstationTypeName?: string;
+  capabilities?: string[];
 }
 
 export interface ManagedInstance {
@@ -49,6 +51,8 @@ export interface ManagedInstance {
   name: string;
   keyProfileName?: string;
   githubAgentUsername?: string;
+  workstationTypeName?: string;
+  capabilities?: string[];
 }
 
 export interface LaunchResult {
@@ -183,6 +187,12 @@ export async function launchInstance(options: LaunchOptions): Promise<LaunchResu
             : []),
           ...(options.githubAgentUsername
             ? [{ Key: 'clawdult:githubAgentUsername', Value: options.githubAgentUsername }]
+            : []),
+          ...(options.workstationTypeName
+            ? [{ Key: 'clawdult:workstationType', Value: options.workstationTypeName }]
+            : []),
+          ...(options.capabilities && options.capabilities.length > 0
+            ? [{ Key: 'clawdult:capabilities', Value: options.capabilities.join(',') }]
             : []),
         ],
       },
@@ -486,6 +496,8 @@ function parseInstanceToManaged(instance: Instance, region: string): ManagedInst
   const name = getTag('clawdult:agent');
   if (!name) return null;
 
+  const capabilitiesTag = getTag('clawdult:capabilities');
+
   return {
     instanceId: instance.InstanceId!,
     state: (instance.State?.Name || 'unknown') as ManagedInstance['state'],
@@ -497,6 +509,8 @@ function parseInstanceToManaged(instance: Instance, region: string): ManagedInst
     name,
     keyProfileName: getTag('clawdult:keyProfileName'),
     githubAgentUsername: getTag('clawdult:githubAgentUsername'),
+    workstationTypeName: getTag('clawdult:workstationType'),
+    capabilities: capabilitiesTag ? capabilitiesTag.split(',') : undefined,
   };
 }
 

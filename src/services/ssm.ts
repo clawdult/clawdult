@@ -574,4 +574,22 @@ export async function getSageMakerRoleArn(
   }
 }
 
+/**
+ * Store workstation type configuration in SSM so the workstation knows its type and capabilities.
+ */
+export async function pushWorkstationTypeToSSM(
+  agentName: string,
+  region: string,
+  workstationType: { name: string; capabilities: string[]; tools: Record<string, boolean> }
+): Promise<void> {
+  const client = await createSSMClient(region);
+
+  await putParameter(client, {
+    name: `/clawdult/${agentName}/workstation-type`,
+    value: JSON.stringify(workstationType),
+    type: 'String',
+    agentName,
+  });
+}
+
 export { KEY_NAME_MAP };

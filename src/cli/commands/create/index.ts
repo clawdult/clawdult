@@ -10,10 +10,11 @@ import {
   getConfiguredDescription as getConnectivityDescription,
   validateConnectivity,
 } from '../../../services/connectivity-profiles.js';
-import type { GitHubAgentAccount } from '../../../schemas/config.js';
+import type { GitHubAgentAccount, WorkstationType } from '../../../schemas/config.js';
 import { GO_BACK } from '../../utils/wizard.js';
 import { requireAwsCredentials } from '../../utils/require-aws.js';
 import {
+  handleWorkstationType,
   handleKeyProfile,
   handleConnectivityProfile,
   handleGitHubAgent,
@@ -94,6 +95,7 @@ export const createCommand = new Command('create')
   .option('--key-profile <name>', 'Use a specific key profile')
   .option('--skip-connectivity', 'Skip connectivity profile step')
   .option('--connectivity-profile <name>', 'Use a specific connectivity profile')
+  .option('--workstation-type <type>', 'Workstation type (e.g., general-purpose, data-science)')
   .option('--dry-run', 'Show what would be created without actually creating')
   .option('--no-ssh', 'Skip auto-SSH into workstation after creation')
   .action(async (providedName: string | undefined, options) => {
@@ -120,8 +122,9 @@ export const createCommand = new Command('create')
     }
 
     // Build step list based on what's not skipped
-    type StepName = 'keyProfile' | 'github' | 'connectivity' | 'infrastructure';
+    type StepName = 'workstationType' | 'keyProfile' | 'github' | 'connectivity' | 'infrastructure';
     const steps: StepName[] = [];
+    steps.push('workstationType');
     if (!options.skipKeys) steps.push('keyProfile');
     if (!options.skipGithub) steps.push('github');
     if (!options.skipConnectivity) steps.push('connectivity');
@@ -129,6 +132,7 @@ export const createCommand = new Command('create')
 
     // Accumulated state from each step (object so TypeScript doesn't narrow through closures)
     const wizardState = {
+      workstationType: null as WorkstationType | null,
       keyProfile: null as KeyProfile | null,
       github: null as GitHubAgentAccount | null,
       connectivity: null as ConnectivityProfile | null,
@@ -142,6 +146,13 @@ export const createCommand = new Command('create')
       const allowBack = idx > 0;
 
       switch (stepName) {
+        case 'workstationType': {
+          console.log(chalk.bold(`STEP ${displayNum}: Workstation Type\n`));
+          const result = await handleWorkstationType(options.workstationType, allowBack);
+          if (result === GO_BACK) return false;
+          wizardState.workstationType = result;
+          return true;
+        }
         case 'keyProfile': {
           console.log(chalk.bold(`STEP ${displayNum}: API Key Profile\n`));
           const result = await handleKeyProfile(options.keyProfile, allowBack);
@@ -189,6 +200,11 @@ export const createCommand = new Command('create')
     wizardConfirm: while (true) {
       console.log(chalk.dim('\nConfiguration:'));
       console.log(chalk.dim(`  Name:          ${name}`));
+      console.log(
+        chalk.dim(
+          `  Type:          ${wizardState.workstationType!.name} (${wizardState.workstationType!.description})`
+        )
+      );
       console.log(chalk.dim(`  Instance Type: ${wizardState.infrastructure!.instanceType}`));
       console.log(chalk.dim(`  Region:        ${wizardState.infrastructure!.region}`));
       console.log(chalk.dim(`  Volume Size:   ${wizardState.infrastructure!.volumeSize} GB`));
@@ -263,6 +279,7 @@ export const createCommand = new Command('create')
 
     await provisionWorkstation({
       name,
+      workstationType: wizardState.workstationType!,
       infrastructure: wizardState.infrastructure!,
       keyProfile: wizardState.keyProfile,
       github: wizardState.github,

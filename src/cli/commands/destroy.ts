@@ -5,6 +5,7 @@ import ora from 'ora';
 import { terminateInstance } from '../../services/ec2.js';
 import { requireAwsCredentials } from '../utils/require-aws.js';
 import { deleteIamResources } from '../../services/iam.js';
+import type { CapabilityModule } from '../../schemas/config.js';
 import { resolveInstance } from '../utils/instance-resolver.js';
 import { CLIError } from '../utils/errors.js';
 
@@ -62,10 +63,14 @@ export const destroyCommand = new Command('destroy')
 
       terminateSpinner.succeed('Instance terminated');
 
-      // Clean up IAM resources
+      // Clean up IAM resources (pass capabilities from tags for targeted cleanup)
       const iamSpinner = ora('Cleaning up IAM resources...').start();
       try {
-        await deleteIamResources(instance.name, instance.region);
+        await deleteIamResources(
+          instance.name,
+          instance.region,
+          instance.capabilities as CapabilityModule[] | undefined
+        );
         iamSpinner.succeed('IAM resources cleaned up');
       } catch (error) {
         // Don't fail destroy if IAM cleanup fails - resources are harmless without instance

@@ -81,6 +81,19 @@ export const ToolsConfigSchema = z.object({
 
 export type ToolsConfig = z.infer<typeof ToolsConfigSchema>;
 
+export const CapabilityModuleSchema = z.enum(['sagemaker']);
+
+export type CapabilityModule = z.infer<typeof CapabilityModuleSchema>;
+
+export const WorkstationTypeSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  capabilities: z.array(CapabilityModuleSchema).default([]),
+  tools: ToolsConfigSchema.default({}),
+});
+
+export type WorkstationType = z.infer<typeof WorkstationTypeSchema>;
+
 export const SageMakerInstanceTypeSchema = z.enum([
   'ml.g4dn.xlarge',
   'ml.g4dn.2xlarge',

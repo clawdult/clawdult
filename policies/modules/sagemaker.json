@@ -1,0 +1,42 @@
+{
+  "statements": [
+    {
+      "Sid": "SageMakerTrainingAccess",
+      "Effect": "Allow",
+      "Action": [
+        "sagemaker:CreateTrainingJob",
+        "sagemaker:DescribeTrainingJob",
+        "sagemaker:StopTrainingJob",
+        "sagemaker:ListTrainingJobs",
+        "sagemaker:CreateExperiment",
+        "sagemaker:CreateTrial",
+        "sagemaker:CreateTrialComponent",
+        "sagemaker:UpdateTrialComponent",
+        "sagemaker:DescribeExperiment",
+        "sagemaker:DescribeTrial",
+        "sagemaker:DescribeTrialComponent",
+        "sagemaker:ListExperiments",
+        "sagemaker:ListTrials",
+        "sagemaker:ListTrialComponents",
+        "sagemaker:AddTags"
+      ],
+      "Resource": [
+        "arn:aws:sagemaker:*:*:training-job/clawdult-*",
+        "arn:aws:sagemaker:*:*:experiment/clawdult-*",
+        "arn:aws:sagemaker:*:*:experiment-trial/clawdult-*",
+        "arn:aws:sagemaker:*:*:experiment-trial-component/clawdult-*"
+      ]
+    },
+    {
+      "Sid": "PassSageMakerExecutionRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::*:role/clawdult-*-sagemaker-role",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "sagemaker.amazonaws.com"
+        }
+      }
+    }
+  ]
+}

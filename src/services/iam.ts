@@ -16,13 +16,16 @@ import {
   PutRolePolicyCommand,
   DeleteRolePolicyCommand,
 } from '@aws-sdk/client-iam';
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { getAWSClientConfig } from './aws-client.js';
 import { retryWithBackoff } from './aws-retry.js';
+import { composeAgentPolicy, composeBoundaryPolicy, getExtraRoles } from './policy-composer.js';
+import type { CapabilityModule } from '../schemas/config.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+export interface ExtraRoleInfo {
+  roleName: string;
+  roleArn: string;
+  type: string;
+}
 
 export interface IamResources {
   instanceProfileName: string;
@@ -31,8 +34,7 @@ export interface IamResources {
   roleArn: string;
   policyArn: string;
   boundaryArn: string;
-  sageMakerRoleName: string;
-  sageMakerRoleArn: string;
+  extraRoles: ExtraRoleInfo[];
 }
 
 // Naming convention for IAM resources
@@ -67,27 +69,17 @@ async function getAccountId(region: string): Promise<string> {
   return identity.Account!;
 }
 
-function getPolicyPath(filename: string): string {
-  const projectRoot = path.resolve(__dirname, '..', '..');
-  return path.join(projectRoot, 'policies', filename);
-}
-
-async function loadPolicyDocument(filename: string): Promise<string> {
-  const policyPath = getPolicyPath(filename);
-  return fs.readFile(policyPath, 'utf-8');
-}
-
 async function ensurePermissionBoundary(
   name: string,
-  region: string,
   client: IAMClient,
-  accountId: string
+  accountId: string,
+  capabilities: CapabilityModule[]
 ): Promise<string> {
   const boundaryName = getBoundaryName(name);
   const boundaryArn = `arn:aws:iam::${accountId}:policy/${boundaryName}`;
 
   try {
-    const policyDocument = await loadPolicyDocument('spending-limit-boundary.json');
+    const policyDocument = await composeBoundaryPolicy(capabilities);
 
     await client.send(
       new CreatePolicyCommand({
@@ -112,20 +104,15 @@ async function ensurePermissionBoundary(
 
 async function ensureAgentPolicy(
   name: string,
-  region: string,
   client: IAMClient,
-  accountId: string
+  accountId: string,
+  capabilities: CapabilityModule[]
 ): Promise<string> {
   const policyName = getPolicyName(name);
   const policyArn = `arn:aws:iam::${accountId}:policy/${policyName}`;
 
   try {
-    let policyDocument = await loadPolicyDocument('agent-base-policy.json');
-
-    // Replace the placeholder with the literal agent name
-    // The policy uses ${aws:PrincipalTag/clawdult:agent} which won't work for instance profiles
-    // We need to replace it with the actual agent name
-    policyDocument = policyDocument.replace(/\$\{aws:PrincipalTag\/clawdult:agent\}/g, name);
+    const policyDocument = await composeAgentPolicy(name, capabilities);
 
     await client.send(
       new CreatePolicyCommand({
@@ -148,12 +135,7 @@ async function ensureAgentPolicy(
   }
 }
 
-async function ensureRole(
-  name: string,
-  region: string,
-  client: IAMClient,
-  boundaryArn: string
-): Promise<string> {
+async function ensureRole(name: string, client: IAMClient, boundaryArn: string): Promise<string> {
   const roleName = getRoleName(name);
 
   // EC2 trust policy
@@ -199,11 +181,7 @@ async function ensureRole(
   }
 }
 
-async function ensureInstanceProfile(
-  name: string,
-  region: string,
-  client: IAMClient
-): Promise<string> {
+async function ensureInstanceProfile(name: string, client: IAMClient): Promise<string> {
   const profileName = getProfileName(name);
 
   try {
@@ -415,21 +393,25 @@ async function waitForInstanceProfileReady(
  * Create all IAM resources needed for a workstation.
  * This is idempotent - safe to call multiple times.
  */
-export async function ensureIamResources(name: string, region: string): Promise<IamResources> {
+export async function ensureIamResources(
+  name: string,
+  region: string,
+  capabilities: CapabilityModule[] = []
+): Promise<IamResources> {
   const client = await createIAMClient(region);
   const accountId = await getAccountId(region);
 
-  // Create permission boundary
-  const boundaryArn = await ensurePermissionBoundary(name, region, client, accountId);
+  // Create permission boundary (composed from base + capability overrides)
+  const boundaryArn = await ensurePermissionBoundary(name, client, accountId, capabilities);
 
-  // Create agent policy
-  const policyArn = await ensureAgentPolicy(name, region, client, accountId);
+  // Create agent policy (composed from base + capability modules)
+  const policyArn = await ensureAgentPolicy(name, client, accountId, capabilities);
 
   // Create role with permission boundary
-  const roleArn = await ensureRole(name, region, client, boundaryArn);
+  const roleArn = await ensureRole(name, client, boundaryArn);
 
   // Create instance profile
-  const instanceProfileArn = await ensureInstanceProfile(name, region, client);
+  const instanceProfileArn = await ensureInstanceProfile(name, client);
 
   // Attach policies to role (agent policy + SSM managed policy for Session Manager)
   // Use retry for eventual consistency - role may not be immediately visible
@@ -447,9 +429,19 @@ export async function ensureIamResources(name: string, region: string): Promise<
   const profileName = getProfileName(name);
   await retryWithBackoff(() => addRoleToInstanceProfile(roleName, profileName, client));
 
-  // Create SageMaker execution role (for GPU training job dispatch)
-  const sageMakerRoleName = getSageMakerRoleName(name);
-  const sageMakerRoleArn = await ensureSageMakerRole(name, client, boundaryArn);
+  // Create extra roles based on capabilities
+  const extraRoles: ExtraRoleInfo[] = [];
+  for (const extra of getExtraRoles(capabilities)) {
+    if (extra.type === 'sagemaker') {
+      const sageMakerRoleName = getSageMakerRoleName(name);
+      const sageMakerRoleArn = await ensureSageMakerRole(name, client, boundaryArn);
+      extraRoles.push({
+        roleName: sageMakerRoleName,
+        roleArn: sageMakerRoleArn,
+        type: 'sagemaker',
+      });
+    }
+  }
 
   // Wait for IAM propagation
   await waitForInstanceProfileReady(profileName, client);
@@ -461,16 +453,22 @@ export async function ensureIamResources(name: string, region: string): Promise<
     roleArn,
     policyArn,
     boundaryArn,
-    sageMakerRoleName,
-    sageMakerRoleArn,
+    extraRoles,
   };
 }
 
 /**
  * Delete all IAM resources for a workstation.
  * Order matters: detach policies, remove role from profile, delete profile, delete role, delete policies.
+ *
+ * When capabilities are provided, only the relevant extra roles are cleaned up.
+ * When omitted (backwards compat for pre-existing workstations), attempts SageMaker cleanup.
  */
-export async function deleteIamResources(name: string, region: string): Promise<void> {
+export async function deleteIamResources(
+  name: string,
+  region: string,
+  capabilities?: CapabilityModule[]
+): Promise<void> {
   const client = await createIAMClient(region);
   const accountId = await getAccountId(region);
 
@@ -556,30 +554,35 @@ export async function deleteIamResources(name: string, region: string): Promise<
     }
   }
 
-  // 6. Delete SageMaker execution role (inline policy + role)
-  const sageMakerRoleName = getSageMakerRoleName(name);
-  try {
-    await client.send(
-      new DeleteRolePolicyCommand({
-        RoleName: sageMakerRoleName,
-        PolicyName: `${sageMakerRoleName}-policy`,
-      })
-    );
-  } catch (error) {
-    if (!(error instanceof Error && error.name === 'NoSuchEntityException')) {
-      throw error;
-    }
-  }
+  // 6. Delete extra roles based on capabilities
+  // When capabilities not provided, attempt SageMaker cleanup for backwards compatibility
+  const shouldCleanupSageMaker = capabilities === undefined || capabilities.includes('sagemaker');
 
-  try {
-    await client.send(
-      new DeleteRoleCommand({
-        RoleName: sageMakerRoleName,
-      })
-    );
-  } catch (error) {
-    if (!(error instanceof Error && error.name === 'NoSuchEntityException')) {
-      throw error;
+  if (shouldCleanupSageMaker) {
+    const sageMakerRoleName = getSageMakerRoleName(name);
+    try {
+      await client.send(
+        new DeleteRolePolicyCommand({
+          RoleName: sageMakerRoleName,
+          PolicyName: `${sageMakerRoleName}-policy`,
+        })
+      );
+    } catch (error) {
+      if (!(error instanceof Error && error.name === 'NoSuchEntityException')) {
+        throw error;
+      }
+    }
+
+    try {
+      await client.send(
+        new DeleteRoleCommand({
+          RoleName: sageMakerRoleName,
+        })
+      );
+    } catch (error) {
+      if (!(error instanceof Error && error.name === 'NoSuchEntityException')) {
+        throw error;
+      }
     }
   }
 

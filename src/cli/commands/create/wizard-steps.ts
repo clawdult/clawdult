@@ -2,7 +2,7 @@ import { select, input } from '@inquirer/prompts';
 import chalk from 'chalk';
 import ora from 'ora';
 import { InstanceTypeSchema, RegionSchema } from '../../../schemas/config.js';
-import type { GitHubAgentAccount, GlobalConfig } from '../../../schemas/config.js';
+import type { GitHubAgentAccount, GlobalConfig, WorkstationType } from '../../../schemas/config.js';
 import { GO_BACK, type StepResult } from '../../utils/wizard.js';
 import {
   listKeyProfiles,
@@ -22,6 +22,52 @@ import {
 } from '../profiles/connectivity.js';
 import { listAgentAccounts, getAgentToken, validateToken } from '../../../services/github-agent.js';
 import { createNewGitHubAgent, promptForToken } from './github-flow.js';
+import { listWorkstationTypes, getWorkstationType } from '../../../services/workstation-types.js';
+
+export async function handleWorkstationType(
+  providedType?: string,
+  allowBack = false
+): Promise<StepResult<WorkstationType>> {
+  if (providedType) {
+    const wsType = getWorkstationType(providedType);
+    if (!wsType) {
+      console.log(chalk.red(`Workstation type '${providedType}' not found.\n`));
+      console.log(
+        chalk.dim(
+          `Available types: ${listWorkstationTypes()
+            .map((t) => t.name)
+            .join(', ')}`
+        )
+      );
+      process.exit(1);
+    }
+    console.log(
+      chalk.green('✓') + ` Using workstation type: ${wsType.name} - ${wsType.description}\n`
+    );
+    return wsType;
+  }
+
+  const types = listWorkstationTypes();
+  const choices = [
+    ...types.map((t) => ({
+      value: t.name,
+      name: `${t.name} - ${t.description}${t.capabilities.length > 0 ? ` [${t.capabilities.join(', ')}]` : ''}`,
+    })),
+    ...(allowBack ? [{ value: '__back__', name: '<< Go back' }] : []),
+  ];
+
+  const selection = await select({
+    message: 'Select workstation type:',
+    choices,
+    default: 'general-purpose',
+  });
+
+  if (selection === '__back__') return GO_BACK;
+
+  const wsType = types.find((t) => t.name === selection)!;
+  console.log(chalk.green('✓') + ` Workstation type: ${wsType.name}\n`);
+  return wsType;
+}
 
 export interface InfrastructureResult {
   instanceType: string;

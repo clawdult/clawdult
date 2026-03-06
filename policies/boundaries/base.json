@@ -60,15 +60,10 @@
       "Resource": "*"
     },
     {
-      "Sid": "DenyPassRoleExceptSageMaker",
+      "Sid": "DenyAllPassRole",
       "Effect": "Deny",
       "Action": "iam:PassRole",
-      "Resource": "*",
-      "Condition": {
-        "ForAnyValue:StringNotEquals": {
-          "iam:PassedToService": "sagemaker.amazonaws.com"
-        }
-      }
+      "Resource": "*"
     },
     {
       "Sid": "DenyOrganizationsAccess",

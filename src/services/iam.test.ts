@@ -63,6 +63,16 @@ jest.unstable_mockModule('./aws-retry.js', () => ({
     .mockImplementation((fn) => fn()),
 }));
 
+const mockComposeAgentPolicy = jest.fn<() => Promise<string>>();
+const mockComposeBoundaryPolicy = jest.fn<() => Promise<string>>();
+const mockGetExtraRoles = jest.fn<() => Array<{ type: string; service: string }>>();
+
+jest.unstable_mockModule('./policy-composer.js', () => ({
+  composeAgentPolicy: mockComposeAgentPolicy,
+  composeBoundaryPolicy: mockComposeBoundaryPolicy,
+  getExtraRoles: mockGetExtraRoles,
+}));
+
 // Dynamic import after mocks
 const { ensureIamResources, deleteIamResources } = await import('./iam.js');
 
@@ -72,9 +82,12 @@ describe('IAM resource naming', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockSTSClientSend.mockResolvedValue({ Account: '123456789012' });
+    mockComposeAgentPolicy.mockResolvedValue('{"Version":"2012-10-17","Statement":[]}');
+    mockComposeBoundaryPolicy.mockResolvedValue('{"Version":"2012-10-17","Statement":[]}');
+    mockGetExtraRoles.mockReturnValue([]);
   });
 
-  it('ensureIamResources uses correct naming convention', async () => {
+  it('ensureIamResources uses correct naming convention (no capabilities)', async () => {
     mockIAMClientSend
       // ensurePermissionBoundary - CreatePolicyCommand
       .mockResolvedValueOnce({})
@@ -95,11 +108,6 @@ describe('IAM resource naming', () => {
       .mockResolvedValueOnce({})
       // addRoleToInstanceProfile
       .mockResolvedValueOnce({})
-      // ensureSageMakerRole - CreateRoleCommand + PutRolePolicyCommand
-      .mockResolvedValueOnce({
-        Role: { Arn: 'arn:aws:iam::123456789012:role/clawdult-test-agent-sagemaker-role' },
-      })
-      .mockResolvedValueOnce({})
       // waitForInstanceProfileReady - GetInstanceProfileCommand
       .mockResolvedValueOnce({
         InstanceProfile: {
@@ -119,10 +127,55 @@ describe('IAM resource naming', () => {
     expect(result.instanceProfileArn).toBe(
       'arn:aws:iam::123456789012:instance-profile/clawdult-test-agent-profile'
     );
-    expect(result.sageMakerRoleName).toBe('clawdult-test-agent-sagemaker-role');
-    expect(result.sageMakerRoleArn).toBe(
-      'arn:aws:iam::123456789012:role/clawdult-test-agent-sagemaker-role'
-    );
+    expect(result.extraRoles).toEqual([]);
+  }, 15000);
+
+  it('ensureIamResources creates SageMaker role when sagemaker capability is present', async () => {
+    mockGetExtraRoles.mockReturnValue([{ type: 'sagemaker', service: 'sagemaker.amazonaws.com' }]);
+
+    mockIAMClientSend
+      // ensurePermissionBoundary
+      .mockResolvedValueOnce({})
+      // ensureAgentPolicy
+      .mockResolvedValueOnce({})
+      // ensureRole
+      .mockResolvedValueOnce({
+        Role: { Arn: 'arn:aws:iam::123456789012:role/clawdult-test-agent-role' },
+      })
+      // ensureInstanceProfile
+      .mockResolvedValueOnce({
+        InstanceProfile: {
+          Arn: 'arn:aws:iam::123456789012:instance-profile/clawdult-test-agent-profile',
+        },
+      })
+      // attachPoliciesToRole
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      // addRoleToInstanceProfile
+      .mockResolvedValueOnce({})
+      // ensureSageMakerRole - CreateRoleCommand + PutRolePolicyCommand
+      .mockResolvedValueOnce({
+        Role: { Arn: 'arn:aws:iam::123456789012:role/clawdult-test-agent-sagemaker-role' },
+      })
+      .mockResolvedValueOnce({})
+      // waitForInstanceProfileReady
+      .mockResolvedValueOnce({
+        InstanceProfile: {
+          Roles: [{ RoleName: 'clawdult-test-agent-role' }],
+        },
+      });
+
+    const result = await ensureIamResources('test-agent', 'us-east-1', ['sagemaker']);
+
+    expect(result.extraRoles).toEqual([
+      {
+        roleName: 'clawdult-test-agent-sagemaker-role',
+        roleArn: 'arn:aws:iam::123456789012:role/clawdult-test-agent-sagemaker-role',
+        type: 'sagemaker',
+      },
+    ]);
+    expect(mockComposeAgentPolicy).toHaveBeenCalledWith('test-agent', ['sagemaker']);
+    expect(mockComposeBoundaryPolicy).toHaveBeenCalledWith(['sagemaker']);
   }, 15000);
 
   it('ensureIamResources handles EntityAlreadyExistsException for all resources', async () => {
@@ -151,11 +204,6 @@ describe('IAM resource naming', () => {
       .mockResolvedValueOnce({})
       // addRoleToInstanceProfile
       .mockResolvedValueOnce({})
-      // ensureSageMakerRole - already exists, then GetRole
-      .mockRejectedValueOnce(alreadyExists)
-      .mockResolvedValueOnce({
-        Role: { Arn: 'arn:aws:iam::123456789012:role/clawdult-my-agent-sagemaker-role' },
-      })
       // waitForInstanceProfileReady
       .mockResolvedValueOnce({
         InstanceProfile: {
@@ -185,7 +233,7 @@ describe('deleteIamResources', () => {
     mockSTSClientSend.mockResolvedValue({ Account: '123456789012' });
   });
 
-  it('deletes all resources in correct order', async () => {
+  it('deletes all resources in correct order (no capabilities = backwards compat SageMaker cleanup)', async () => {
     const callOrder: string[] = [];
 
     mockIAMClientSend.mockImplementation(async (cmd: unknown) => {
@@ -217,6 +265,50 @@ describe('deleteIamResources', () => {
       'DeleteRoleCommand',
       'DeletePolicyCommand',
     ]);
+  });
+
+  it('skips SageMaker cleanup when capabilities are empty', async () => {
+    const callOrder: string[] = [];
+
+    mockIAMClientSend.mockImplementation(async (cmd: unknown) => {
+      const cmdName = (cmd as { constructor: { _name: string } }).constructor._name;
+      callOrder.push(cmdName);
+
+      if (cmdName === 'ListAttachedRolePoliciesCommand') {
+        return { AttachedPolicies: [] };
+      }
+      return {};
+    });
+
+    await deleteIamResources('test', 'us-east-1', []);
+
+    // Should NOT include DeleteRolePolicyCommand or second DeleteRoleCommand for SageMaker
+    expect(callOrder).toEqual([
+      'ListAttachedRolePoliciesCommand',
+      'RemoveRoleFromInstanceProfileCommand',
+      'DeleteInstanceProfileCommand',
+      'DeleteRoleCommand',
+      'DeletePolicyCommand',
+      'DeletePolicyCommand',
+    ]);
+  });
+
+  it('includes SageMaker cleanup when sagemaker capability is present', async () => {
+    const callOrder: string[] = [];
+
+    mockIAMClientSend.mockImplementation(async (cmd: unknown) => {
+      const cmdName = (cmd as { constructor: { _name: string } }).constructor._name;
+      callOrder.push(cmdName);
+
+      if (cmdName === 'ListAttachedRolePoliciesCommand') {
+        return { AttachedPolicies: [] };
+      }
+      return {};
+    });
+
+    await deleteIamResources('test', 'us-east-1', ['sagemaker']);
+
+    expect(callOrder).toContain('DeleteRolePolicyCommand'); // SageMaker inline policy
   });
 
   it('ignores NoSuchEntityException during deletion', async () => {

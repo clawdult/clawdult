@@ -27,6 +27,9 @@ export const statusCommand = new Command('status')
 
       console.log(chalk.bold(`\nWorkstation: ${instance.name}\n`));
       console.log(`  Status:        ${formatState(instance.state)}`);
+      if (instance.workstationTypeName) {
+        console.log(`  WS Type:       ${chalk.dim(instance.workstationTypeName)}`);
+      }
       console.log(`  Instance ID:   ${chalk.dim(instance.instanceId)}`);
       console.log(`  Instance Type: ${chalk.dim(instance.instanceType)}`);
       console.log(`  Region:        ${chalk.dim(instance.region)}`);
@@ -44,6 +47,9 @@ export const statusCommand = new Command('status')
       }
       if (instance.githubAgentUsername) {
         console.log(`  GitHub Agent:  ${chalk.dim(instance.githubAgentUsername)}`);
+      }
+      if (instance.capabilities && instance.capabilities.length > 0) {
+        console.log(`  Capabilities:  ${chalk.dim(instance.capabilities.join(', '))}`);
       }
 
       // Check for gateway URL (Tailscale Serve/Funnel)
@@ -82,17 +88,19 @@ export const statusCommand = new Command('status')
       chalk.dim('  ') +
         chalk.dim('NAME'.padEnd(20)) +
         chalk.dim('STATUS'.padEnd(16)) +
-        chalk.dim('TYPE'.padEnd(12)) +
+        chalk.dim('WS TYPE'.padEnd(18)) +
+        chalk.dim('INSTANCE'.padEnd(12)) +
         chalk.dim('REGION'.padEnd(14)) +
         chalk.dim('UPTIME')
     );
-    console.log(chalk.dim('  ' + '─'.repeat(72)));
+    console.log(chalk.dim('  ' + '─'.repeat(90)));
 
     for (const instance of instances) {
       console.log(
         '  ' +
           instance.name.padEnd(20) +
           formatState(instance.state).padEnd(16 + 10) + // +10 for ANSI codes
+          (instance.workstationTypeName || '-').padEnd(18) +
           instance.instanceType.padEnd(12) +
           instance.region.padEnd(14) +
           formatDuration(instance.launchTime)

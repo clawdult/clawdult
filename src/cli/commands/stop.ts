@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { confirm } from '@inquirer/prompts';
 import chalk from 'chalk';
 import ora from 'ora';
+
 import { stopInstance, waitForInstanceStopped, type InstanceStatus } from '../../services/ec2.js';
 import { requireAwsCredentials } from '../utils/require-aws.js';
 import { resolveInstance } from '../utils/instance-resolver.js';

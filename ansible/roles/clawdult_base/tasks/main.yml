@@ -217,6 +217,12 @@
     group: root
     mode: '0755'
 
+- name: Source agent.env in user shell
+  lineinfile:
+    path: /home/ubuntu/.bashrc
+    line: 'set -a; [ -f {{ clawdult_base_dir }}/config/agent.env ] && source {{ clawdult_base_dir }}/config/agent.env; set +a'
+    insertafter: EOF
+
 - name: Set CLAWDULT_INSTANCE environment variable
   lineinfile:
     path: /etc/environment

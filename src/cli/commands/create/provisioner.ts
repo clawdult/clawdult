@@ -83,8 +83,8 @@ function showManualConnectionInstructions(
   console.log(chalk.dim(`     clawdult ssh ${workstationName}`));
   console.log(chalk.dim(`     (or: ssh -i ${sshKeyPath} ubuntu@${ip})\n`));
 
-  console.log(chalk.white('  2. Run the onboarding flow:'));
-  console.log(chalk.dim('     openclaw onboard\n'));
+  console.log(chalk.white('  2. Verify the agent is configured:'));
+  console.log(chalk.dim('     openclaw doctor\n'));
 }
 
 export async function provisionWorkstation(params: {
@@ -555,10 +555,9 @@ export async function provisionWorkstation(params: {
 
       if (connectIp) {
         const methodLabel = connectionMethod === 'tailscale' ? 'Tailscale' : 'public IP';
-        console.log(chalk.cyan(`Connecting via ${methodLabel} to run openclaw onboard...\n`));
+        console.log(chalk.cyan(`Connecting via ${methodLabel} to verify workstation...\n`));
 
         const sshArgs: string[] = [
-          '-t', // Force TTY allocation for interactive prompts
           '-i',
           sshKeyPath,
           '-p',
@@ -568,7 +567,7 @@ export async function provisionWorkstation(params: {
           '-o',
           'ConnectTimeout=30',
           `ubuntu@${connectIp}`,
-          'openclaw onboard',
+          'openclaw doctor || openclaw --version',
         ];
 
         try {
@@ -576,7 +575,6 @@ export async function provisionWorkstation(params: {
             const ssh = spawn('ssh', sshArgs, { stdio: 'inherit' });
             ssh.on('error', reject);
             ssh.on('exit', (code, signal) => {
-              // Signal termination (e.g., Ctrl+C) should exit cleanly
               if (signal) {
                 process.exit(128 + (signal === 'SIGINT' ? 2 : 1));
               }
@@ -585,10 +583,10 @@ export async function provisionWorkstation(params: {
           });
 
           if (exitCode === 0) {
-            return; // Success - we're done
+            console.log(chalk.green('\n✓ Workstation verified and ready.\n'));
+            return;
           }
-          // Non-zero exit - fall through to show manual instructions
-          console.log(chalk.yellow(`\nSSH command exited with code ${exitCode}\n`));
+          console.log(chalk.yellow(`\nVerification exited with code ${exitCode} (non-fatal)\n`));
         } catch (error) {
           console.log(
             chalk.yellow(
@@ -597,7 +595,6 @@ export async function provisionWorkstation(params: {
           );
         }
 
-        // Show manual connection instructions
         showManualConnectionInstructions(config.name, connectIp, connectionMethod, sshKeyPath);
       } else {
         console.log(chalk.yellow('No reachable IP found for auto-SSH.\n'));
@@ -606,7 +603,7 @@ export async function provisionWorkstation(params: {
           chalk.dim('  Use: ') +
             chalk.white(`clawdult ssh ${config.name}`) +
             chalk.dim(' then run ') +
-            chalk.white('openclaw onboard\n')
+            chalk.white('openclaw doctor\n')
         );
       }
     } else {
@@ -614,8 +611,8 @@ export async function provisionWorkstation(params: {
       console.log(chalk.cyan('To complete setup:\n'));
       console.log(chalk.white('  1. Connect to your workstation:'));
       console.log(chalk.dim(`     clawdult ssh ${config.name}\n`));
-      console.log(chalk.white('  2. Run the onboarding flow:'));
-      console.log(chalk.dim('     openclaw onboard\n'));
+      console.log(chalk.white('  2. Verify the agent is configured:'));
+      console.log(chalk.dim('     openclaw doctor\n'));
     }
   } catch (error) {
     console.error(chalk.red(error instanceof Error ? error.message : String(error)));

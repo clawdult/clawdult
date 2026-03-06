@@ -4,6 +4,12 @@ import {
   DescribeInstancesCommand,
   DescribeImagesCommand,
   TerminateInstancesCommand,
+  StopInstancesCommand,
+  StartInstancesCommand,
+  ModifyInstanceAttributeCommand,
+  CreateImageCommand,
+  DeregisterImageCommand,
+  CopyImageCommand,
   DescribeVpcsCommand,
   DescribeSecurityGroupsCommand,
   CreateSecurityGroupCommand,
@@ -11,6 +17,7 @@ import {
   CreateKeyPairCommand,
   DescribeKeyPairsCommand,
   CreateTagsCommand,
+  DeleteTagsCommand,
   type RunInstancesCommandInput,
   type _InstanceType,
   type Instance,
@@ -31,8 +38,10 @@ export interface LaunchOptions {
   securityGroupIds?: string[];
   iamInstanceProfile?: string;
   keyName?: string;
+  amiId?: string;
   // Metadata tags
   keyProfileName?: string;
+  permissionsProfileName?: string;
   githubAgentUsername?: string;
 }
 
@@ -48,6 +57,7 @@ export interface ManagedInstance {
   // Metadata from tags
   name: string;
   keyProfileName?: string;
+  permissionsProfileName?: string;
   githubAgentUsername?: string;
 }
 
@@ -143,8 +153,8 @@ log "Clawdult workstation ${name} initialized"
 export async function launchInstance(options: LaunchOptions): Promise<LaunchResult> {
   const client = await createEC2Client(options.region);
 
-  // Get the latest Clawdult AMI (built by setup-admin)
-  const amiId = await getLatestClawdultAmi(options.region);
+  // Use provided AMI (for clone/restore) or get the latest Clawdult AMI
+  const amiId = options.amiId ?? (await getLatestClawdultAmi(options.region));
   if (!amiId) {
     throw new Error('No Clawdult AMI found. Run "clawdult setup-admin" to build one first.');
   }
@@ -180,6 +190,9 @@ export async function launchInstance(options: LaunchOptions): Promise<LaunchResu
           { Key: 'clawdult:managed', Value: 'true' },
           ...(options.keyProfileName
             ? [{ Key: 'clawdult:keyProfileName', Value: options.keyProfileName }]
+            : []),
+          ...(options.permissionsProfileName
+            ? [{ Key: 'clawdult:permissionsProfileName', Value: options.permissionsProfileName }]
             : []),
           ...(options.githubAgentUsername
             ? [{ Key: 'clawdult:githubAgentUsername', Value: options.githubAgentUsername }]
@@ -496,6 +509,7 @@ function parseInstanceToManaged(instance: Instance, region: string): ManagedInst
     region,
     name,
     keyProfileName: getTag('clawdult:keyProfileName'),
+    permissionsProfileName: getTag('clawdult:permissionsProfileName'),
     githubAgentUsername: getTag('clawdult:githubAgentUsername'),
   };
 }
@@ -568,6 +582,35 @@ export async function getManagedInstance(
 export async function terminateInstance(instanceId: string, region: string): Promise<void> {
   const client = await createEC2Client(region);
   await client.send(new TerminateInstancesCommand({ InstanceIds: [instanceId] }));
+}
+
+export async function setInstanceTag(
+  instanceId: string,
+  region: string,
+  key: string,
+  value: string
+): Promise<void> {
+  const client = await createEC2Client(region);
+  await client.send(
+    new CreateTagsCommand({
+      Resources: [instanceId],
+      Tags: [{ Key: key, Value: value }],
+    })
+  );
+}
+
+export async function deleteInstanceTag(
+  instanceId: string,
+  region: string,
+  key: string
+): Promise<void> {
+  const client = await createEC2Client(region);
+  await client.send(
+    new DeleteTagsCommand({
+      Resources: [instanceId],
+      Tags: [{ Key: key }],
+    })
+  );
 }
 
 const SECURITY_GROUP_NAME = 'clawdult-ssh';
@@ -812,6 +855,202 @@ export async function keyPairExists(keyName: string, region: string): Promise<bo
 export interface CreateKeyPairResult {
   keyName: string;
   privateKeyPath: string;
+}
+
+export async function stopInstance(instanceId: string, region: string): Promise<void> {
+  const client = await createEC2Client(region);
+  await client.send(new StopInstancesCommand({ InstanceIds: [instanceId] }));
+}
+
+export async function waitForInstanceStopped(
+  instanceId: string,
+  region: string,
+  options: WaitOptions = {}
+): Promise<InstanceStatus> {
+  const maxWaitTime = options.maxWaitTimeSeconds || 300;
+  const pollInterval = 5000;
+  const startTime = Date.now();
+
+  while (true) {
+    const status = await getInstanceStatus(instanceId, region);
+
+    if (options.onProgress) {
+      options.onProgress(status);
+    }
+
+    if (status.state === 'stopped') {
+      return status;
+    }
+
+    if (status.state === 'terminated') {
+      throw new Error(
+        `Instance ${instanceId} was terminated: ${status.stateReason || 'unknown reason'}`
+      );
+    }
+
+    const elapsed = (Date.now() - startTime) / 1000;
+    if (elapsed >= maxWaitTime) {
+      throw new Error(
+        `Timeout waiting for instance ${instanceId} to stop after ${maxWaitTime}s (current state: ${status.state})`
+      );
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollInterval));
+  }
+}
+
+export async function modifyInstanceType(
+  instanceId: string,
+  region: string,
+  instanceType: string
+): Promise<void> {
+  const client = await createEC2Client(region);
+  await client.send(
+    new ModifyInstanceAttributeCommand({
+      InstanceId: instanceId,
+      InstanceType: { Value: instanceType },
+    })
+  );
+}
+
+export async function startInstance(instanceId: string, region: string): Promise<void> {
+  const client = await createEC2Client(region);
+  await client.send(new StartInstancesCommand({ InstanceIds: [instanceId] }));
+}
+
+export async function createAmiFromInstance(
+  instanceId: string,
+  region: string,
+  name: string,
+  description?: string
+): Promise<string> {
+  const client = await createEC2Client(region);
+
+  const response = await client.send(
+    new CreateImageCommand({
+      InstanceId: instanceId,
+      Name: name,
+      Description: description,
+      NoReboot: false,
+      TagSpecifications: [
+        {
+          ResourceType: 'image',
+          Tags: [
+            { Key: 'Name', Value: name },
+            { Key: 'clawdult:managed', Value: 'true' },
+          ],
+        },
+        {
+          ResourceType: 'snapshot',
+          Tags: [
+            { Key: 'Name', Value: `${name}-snapshot` },
+            { Key: 'clawdult:managed', Value: 'true' },
+          ],
+        },
+      ],
+    })
+  );
+
+  if (!response.ImageId) {
+    throw new Error('CreateImage returned no ImageId');
+  }
+
+  return response.ImageId;
+}
+
+export async function waitForAmiAvailable(
+  imageId: string,
+  region: string,
+  options: WaitOptions = {}
+): Promise<void> {
+  const maxWaitTime = options.maxWaitTimeSeconds || 600;
+  const pollInterval = 15000;
+  const startTime = Date.now();
+
+  while (true) {
+    const ami = await describeAmi(imageId, region);
+    if (!ami) {
+      throw new Error(`AMI ${imageId} not found`);
+    }
+
+    if (ami.state === 'available') {
+      return;
+    }
+
+    if (ami.state === 'failed' || ami.state === 'deregistered') {
+      throw new Error(`AMI ${imageId} failed: ${ami.state}`);
+    }
+
+    const elapsed = (Date.now() - startTime) / 1000;
+    if (elapsed >= maxWaitTime) {
+      throw new Error(
+        `Timeout waiting for AMI ${imageId} to become available after ${maxWaitTime}s (current state: ${ami.state})`
+      );
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollInterval));
+  }
+}
+
+export interface AmiInfo {
+  imageId: string;
+  name?: string;
+  state: string;
+  description?: string;
+}
+
+export async function describeAmi(imageId: string, region: string): Promise<AmiInfo | null> {
+  const client = await createEC2Client(region);
+
+  try {
+    const response = await client.send(new DescribeImagesCommand({ ImageIds: [imageId] }));
+
+    if (!response.Images || response.Images.length === 0) {
+      return null;
+    }
+
+    const image = response.Images[0];
+    return {
+      imageId: image.ImageId!,
+      name: image.Name,
+      state: image.State || 'unknown',
+      description: image.Description,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.name === 'InvalidAMIID.NotFound') {
+      return null;
+    }
+    throw error;
+  }
+}
+
+export async function deregisterAmi(imageId: string, region: string): Promise<void> {
+  const client = await createEC2Client(region);
+  await client.send(new DeregisterImageCommand({ ImageId: imageId }));
+}
+
+export async function copyAmiToRegion(
+  imageId: string,
+  sourceRegion: string,
+  destRegion: string,
+  name: string
+): Promise<string> {
+  const client = await createEC2Client(destRegion);
+
+  const response = await client.send(
+    new CopyImageCommand({
+      SourceImageId: imageId,
+      SourceRegion: sourceRegion,
+      Name: name,
+      Description: `Copy of ${imageId} from ${sourceRegion}`,
+    })
+  );
+
+  if (!response.ImageId) {
+    throw new Error('CopyImage returned no ImageId');
+  }
+
+  return response.ImageId;
 }
 
 export async function createKeyPair(keyName: string, region: string): Promise<CreateKeyPairResult> {

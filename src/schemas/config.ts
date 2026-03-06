@@ -80,3 +80,50 @@ export const ToolsConfigSchema = z.object({
 });
 
 export type ToolsConfig = z.infer<typeof ToolsConfigSchema>;
+
+export const IamStatementSchema = z.object({
+  Sid: z.string().optional(),
+  Effect: z.enum(['Allow', 'Deny']),
+  Action: z.union([z.string(), z.array(z.string())]),
+  Resource: z.union([z.string(), z.array(z.string())]),
+  Condition: z.record(z.any()).optional(),
+});
+
+export type IamStatement = z.infer<typeof IamStatementSchema>;
+
+export const PermissionsProfileSchema = z.object({
+  name: z
+    .string()
+    .min(1)
+    .max(50)
+    .regex(/^[a-zA-Z0-9-_]+$/),
+  createdAt: z.string().datetime(),
+  description: z.string().optional(),
+  statements: z.array(IamStatementSchema).min(1),
+});
+
+export type PermissionsProfile = z.infer<typeof PermissionsProfileSchema>;
+
+export const WorkstationSnapshotSchema = z.object({
+  name: z
+    .string()
+    .min(1)
+    .max(50)
+    .regex(/^[a-zA-Z0-9-_]+$/),
+  createdAt: z.string().datetime(),
+  description: z.string().optional(),
+  amiId: z.string().regex(/^ami-[a-f0-9]+$/),
+  amiRegion: RegionSchema,
+  sourceWorkstationName: z.string(),
+  sourceInstanceId: z.string(),
+  instanceType: InstanceTypeSchema,
+  region: RegionSchema,
+  volumeSize: z.number().int().min(20).max(500),
+  keyProfileName: z.string().optional(),
+  connectivityProfileName: z.string().optional(),
+  permissionsProfileName: z.string().optional(),
+  githubAgentUsername: z.string().optional(),
+  tags: z.record(z.string()).optional(),
+});
+
+export type WorkstationSnapshot = z.infer<typeof WorkstationSnapshotSchema>;

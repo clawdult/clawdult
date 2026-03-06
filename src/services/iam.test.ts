@@ -34,6 +34,8 @@ jest.unstable_mockModule('@aws-sdk/client-iam', () => {
     RemoveRoleFromInstanceProfileCommand: cmd('RemoveRoleFromInstanceProfileCommand'),
     ListAttachedRolePoliciesCommand: cmd('ListAttachedRolePoliciesCommand'),
     GetRoleCommand: cmd('GetRoleCommand'),
+    ListPolicyVersionsCommand: cmd('ListPolicyVersionsCommand'),
+    DeletePolicyVersionCommand: cmd('DeletePolicyVersionCommand'),
   };
 });
 
@@ -196,6 +198,7 @@ describe('deleteIamResources', () => {
       'RemoveRoleFromInstanceProfileCommand',
       'DeleteInstanceProfileCommand',
       'DeleteRoleCommand',
+      'DeletePolicyCommand',
       'DeletePolicyCommand',
       'DeletePolicyCommand',
     ]);

@@ -36,6 +36,7 @@ jest.unstable_mockModule('@aws-sdk/client-ssm', () => {
     SSMClient: FakeSSMClient,
     PutParameterCommand: cmd('PutParameterCommand'),
     GetParameterCommand: cmd('GetParameterCommand'),
+    GetParametersByPathCommand: cmd('GetParametersByPathCommand'),
     ParameterAlreadyExists,
     ParameterNotFound,
   };

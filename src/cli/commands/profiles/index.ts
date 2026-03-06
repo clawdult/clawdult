@@ -6,17 +6,23 @@ import {
   listConnectivityProfiles,
   getConfiguredDescription as getConnectivityDescription,
 } from '../../../services/connectivity-profiles.js';
+import {
+  listPermissionsProfiles,
+  getPermissionsDescription,
+} from '../../../services/permissions-profiles.js';
 import { keysCommand } from './keys.js';
 import { budgetCommand } from './budget.js';
 import { connectivityCommand } from './connectivity.js';
 import { typesCommand } from './types.js';
+import { permissionsCommand } from './permissions.js';
 
 export const profilesCommand = new Command('profiles')
-  .description('Manage configuration profiles (keys, budget, connectivity)')
+  .description('Manage configuration profiles (keys, budget, connectivity, permissions)')
   .addCommand(keysCommand)
   .addCommand(budgetCommand)
   .addCommand(connectivityCommand)
   .addCommand(typesCommand)
+  .addCommand(permissionsCommand)
   .action(async () => {
     console.log(chalk.bold('\nProfile Overview\n'));
 
@@ -61,11 +67,27 @@ export const profilesCommand = new Command('profiles')
     }
     console.log();
 
+    // Permissions profiles
+    const permissionsProfiles = await listPermissionsProfiles();
+    console.log(
+      chalk.bold.cyan('Permissions Profiles') + chalk.dim(` (${permissionsProfiles.length})`)
+    );
+    if (permissionsProfiles.length === 0) {
+      console.log(chalk.dim('  No permissions profiles configured.'));
+    } else {
+      for (const profile of permissionsProfiles) {
+        const desc = getPermissionsDescription(profile);
+        console.log(`  ${chalk.cyan(profile.name)} ${chalk.dim(`(${desc})`)}`);
+      }
+    }
+    console.log();
+
     // Usage hints
     console.log(chalk.dim('Commands:'));
     console.log(chalk.dim('  clawdult profiles keys [list|create|edit|delete]'));
     console.log(chalk.dim('  clawdult profiles budget [list|create|edit|delete|apply|status]'));
     console.log(chalk.dim('  clawdult profiles connectivity [list|create|edit|delete]'));
     console.log(chalk.dim('  clawdult profiles types [list|show|create|delete]'));
+    console.log(chalk.dim('  clawdult profiles permissions [list|create|show|edit|delete]'));
     console.log();
   });

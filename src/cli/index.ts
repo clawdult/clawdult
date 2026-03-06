@@ -16,6 +16,12 @@ import { profilesCommand } from './commands/profiles/index.js';
 import { gatewayCommand } from './commands/gateway.js';
 import { trainCommand } from './commands/train.js';
 import { specsCommand } from './commands/specs.js';
+import { resizeCommand } from './commands/resize.js';
+import { stopCommand } from './commands/stop.js';
+import { startCommand } from './commands/start.js';
+import { cloneCommand } from './commands/clone.js';
+import { snapshotsCommand } from './commands/snapshots/index.js';
+import { permissionsCommand } from './commands/permissions.js';
 import { handleCompletion } from './completion/index.js';
 import chalk from 'chalk';
 import { CLIError } from './utils/errors.js';
@@ -47,6 +53,12 @@ program.addCommand(profilesCommand);
 program.addCommand(gatewayCommand);
 program.addCommand(trainCommand);
 program.addCommand(specsCommand);
+program.addCommand(resizeCommand);
+program.addCommand(stopCommand);
+program.addCommand(startCommand);
+program.addCommand(cloneCommand);
+program.addCommand(snapshotsCommand);
+program.addCommand(permissionsCommand);
 program.addCommand(completionCommand);
 
 program.parseAsync().catch((error: unknown) => {

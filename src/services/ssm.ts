@@ -3,6 +3,7 @@ import {
   SSMClient,
   PutParameterCommand,
   GetParameterCommand,
+  GetParametersByPathCommand,
   ParameterAlreadyExists,
   ParameterNotFound,
 } from '@aws-sdk/client-ssm';
@@ -614,6 +615,62 @@ export async function pushAgentInstructionsToSSM(
     type: 'String',
     agentName,
   });
+}
+
+export interface CopySSMResult {
+  copied: string[];
+  failed: string[];
+}
+
+export async function copySSMParameters(
+  sourceAgent: string,
+  destAgent: string,
+  region: string
+): Promise<CopySSMResult> {
+  const client = await createSSMClient(region);
+  const copied: string[] = [];
+  const failed: string[] = [];
+
+  const sourcePath = `/clawdult/${sourceAgent}/`;
+  let nextToken: string | undefined;
+
+  do {
+    const response = await retryWithBackoff(
+      () =>
+        client.send(
+          new GetParametersByPathCommand({
+            Path: sourcePath,
+            WithDecryption: true,
+            Recursive: true,
+            NextToken: nextToken,
+          })
+        ),
+      { transientErrors: SSM_TRANSIENT_ERRORS }
+    );
+
+    for (const param of response.Parameters || []) {
+      if (!param.Name || !param.Value) continue;
+
+      const paramSuffix = param.Name.slice(sourcePath.length);
+      const destName = `/clawdult/${destAgent}/${paramSuffix}`;
+
+      try {
+        await putParameter(client, {
+          name: destName,
+          value: param.Value,
+          type: (param.Type as 'String' | 'SecureString') || 'SecureString',
+          agentName: destAgent,
+        });
+        copied.push(paramSuffix);
+      } catch (error) {
+        failed.push(`${paramSuffix}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    nextToken = response.NextToken;
+  } while (nextToken);
+
+  return { copied, failed };
 }
 
 export { KEY_NAME_MAP };

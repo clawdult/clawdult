@@ -29,16 +29,11 @@ export async function handleWorkstationType(
   allowBack = false
 ): Promise<StepResult<WorkstationType>> {
   if (providedType) {
-    const wsType = getWorkstationType(providedType);
+    const wsType = await getWorkstationType(providedType);
     if (!wsType) {
       console.log(chalk.red(`Workstation type '${providedType}' not found.\n`));
-      console.log(
-        chalk.dim(
-          `Available types: ${listWorkstationTypes()
-            .map((t) => t.name)
-            .join(', ')}`
-        )
-      );
+      const allTypes = await listWorkstationTypes();
+      console.log(chalk.dim(`Available types: ${allTypes.map((t) => t.name).join(', ')}`));
       process.exit(1);
     }
     console.log(
@@ -47,7 +42,7 @@ export async function handleWorkstationType(
     return wsType;
   }
 
-  const types = listWorkstationTypes();
+  const types = await listWorkstationTypes();
   const choices = [
     ...types.map((t) => ({
       value: t.name,

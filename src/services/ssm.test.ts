@@ -389,3 +389,234 @@ describe('pushOpenClawTokenToSSM', () => {
     expect(putCall.input.Value).toBe(token);
   });
 });
+
+describe('copySSMParameters', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('copies params from source to dest with correct path rewriting', async () => {
+    mockSSMClientSend
+      .mockResolvedValueOnce({
+        Parameters: [
+          {
+            Name: '/clawdult/source-agent/anthropic-api-key',
+            Value: 'sk-123',
+            Type: 'SecureString',
+          },
+          { Name: '/clawdult/source-agent/github-username', Value: 'bot', Type: 'String' },
+        ],
+      })
+      .mockResolvedValue({}); // putParameter calls
+
+    const result = await ssmModule.copySSMParameters('source-agent', 'dest-agent', 'us-east-1');
+
+    expect(result.copied).toEqual(['anthropic-api-key', 'github-username']);
+    expect(result.failed).toEqual([]);
+
+    // First call is GetParametersByPath; subsequent calls are PutParameter
+    const getCall = mockSSMClientSend.mock.calls[0][0] as { input: Record<string, unknown> };
+    expect(getCall.input.Path).toBe('/clawdult/source-agent/');
+    expect(getCall.input.WithDecryption).toBe(true);
+
+    // Check dest paths
+    const putCalls = mockSSMClientSend.mock.calls
+      .slice(1)
+      .map((c) => (c[0] as { input: { Name: string; Type: string } }).input);
+    expect(putCalls[0].Name).toBe('/clawdult/dest-agent/anthropic-api-key');
+    expect(putCalls[1].Name).toBe('/clawdult/dest-agent/github-username');
+  });
+
+  it('handles pagination with NextToken', async () => {
+    mockSSMClientSend
+      .mockResolvedValueOnce({
+        Parameters: [{ Name: '/clawdult/src/key-a', Value: 'val-a', Type: 'String' }],
+        NextToken: 'page2',
+      })
+      .mockResolvedValueOnce({}) // putParameter for key-a
+      .mockResolvedValueOnce({
+        Parameters: [{ Name: '/clawdult/src/key-b', Value: 'val-b', Type: 'String' }],
+      })
+      .mockResolvedValueOnce({}); // putParameter for key-b
+
+    const result = await ssmModule.copySSMParameters('src', 'dst', 'us-east-1');
+
+    expect(result.copied).toEqual(['key-a', 'key-b']);
+    expect(result.failed).toEqual([]);
+
+    // Second GetParametersByPath should include NextToken
+    const secondGetCall = mockSSMClientSend.mock.calls[2][0] as { input: Record<string, unknown> };
+    expect(secondGetCall.input.NextToken).toBe('page2');
+  });
+
+  it('reports partial failures', async () => {
+    mockSSMClientSend
+      .mockResolvedValueOnce({
+        Parameters: [
+          { Name: '/clawdult/src/key-ok', Value: 'ok', Type: 'String' },
+          { Name: '/clawdult/src/key-fail', Value: 'fail', Type: 'SecureString' },
+        ],
+      })
+      .mockResolvedValueOnce({}) // key-ok succeeds
+      .mockRejectedValueOnce(new Error('Throttled')); // key-fail fails
+
+    const result = await ssmModule.copySSMParameters('src', 'dst', 'us-east-1');
+
+    expect(result.copied).toEqual(['key-ok']);
+    expect(result.failed).toEqual([expect.stringContaining('key-fail')]);
+    expect(result.failed[0]).toContain('Throttled');
+  });
+
+  it('returns empty copied/failed for empty source', async () => {
+    mockSSMClientSend.mockResolvedValueOnce({ Parameters: [] });
+
+    const result = await ssmModule.copySSMParameters('empty', 'dst', 'us-east-1');
+
+    expect(result.copied).toEqual([]);
+    expect(result.failed).toEqual([]);
+  });
+
+  it('returns empty when no Parameters key in response', async () => {
+    mockSSMClientSend.mockResolvedValueOnce({});
+
+    const result = await ssmModule.copySSMParameters('empty', 'dst', 'us-east-1');
+
+    expect(result.copied).toEqual([]);
+    expect(result.failed).toEqual([]);
+  });
+
+  it('preserves param Type (String vs SecureString)', async () => {
+    mockSSMClientSend
+      .mockResolvedValueOnce({
+        Parameters: [
+          { Name: '/clawdult/src/plain', Value: 'val', Type: 'String' },
+          { Name: '/clawdult/src/secret', Value: 'hidden', Type: 'SecureString' },
+        ],
+      })
+      .mockResolvedValue({});
+
+    await ssmModule.copySSMParameters('src', 'dst', 'us-east-1');
+
+    const putCalls = mockSSMClientSend.mock.calls
+      .slice(1)
+      .map((c) => (c[0] as { input: { Name: string; Type: string } }).input);
+    expect(putCalls[0].Type).toBe('String');
+    expect(putCalls[1].Type).toBe('SecureString');
+  });
+});
+
+describe('pushSageMakerRoleArnToSSM', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockSSMClientSend.mockResolvedValue({});
+  });
+
+  it('pushes role ARN to correct path', async () => {
+    await ssmModule.pushSageMakerRoleArnToSSM(
+      'my-agent',
+      'us-east-1',
+      'arn:aws:iam::123:role/sm-role'
+    );
+
+    const putCall = mockSSMClientSend.mock.calls[0][0] as {
+      input: { Name: string; Value: string };
+    };
+    expect(putCall.input.Name).toBe('/clawdult/my-agent/sagemaker-role-arn');
+    expect(putCall.input.Value).toBe('arn:aws:iam::123:role/sm-role');
+  });
+
+  it('uses Type String', async () => {
+    await ssmModule.pushSageMakerRoleArnToSSM('agent', 'us-east-1', 'arn:role');
+
+    const putCall = mockSSMClientSend.mock.calls[0][0] as {
+      input: { Type: string };
+    };
+    expect(putCall.input.Type).toBe('String');
+  });
+
+  it('includes clawdult tags', async () => {
+    await ssmModule.pushSageMakerRoleArnToSSM('my-agent', 'us-east-1', 'arn:role');
+
+    const putCall = mockSSMClientSend.mock.calls[0][0] as {
+      input: { Tags: Array<{ Key: string; Value: string }> };
+    };
+    expect(putCall.input.Tags).toEqual([
+      { Key: 'clawdult:agent', Value: 'my-agent' },
+      { Key: 'clawdult:managed', Value: 'true' },
+    ]);
+  });
+});
+
+describe('getSageMakerRoleArn', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('returns role ARN from correct path', async () => {
+    mockSSMClientSend.mockResolvedValueOnce({
+      Parameter: { Value: 'arn:aws:iam::123:role/sm-role' },
+    });
+
+    const arn = await ssmModule.getSageMakerRoleArn('my-agent', 'us-east-1');
+
+    expect(arn).toBe('arn:aws:iam::123:role/sm-role');
+    const cmd = mockSSMClientSend.mock.calls[0][0] as { input: { Name: string } };
+    expect(cmd.input.Name).toBe('/clawdult/my-agent/sagemaker-role-arn');
+  });
+
+  it('returns null on ParameterNotFound', async () => {
+    const { ParameterNotFound } = await import('@aws-sdk/client-ssm');
+    mockSSMClientSend.mockRejectedValueOnce(
+      new (ParameterNotFound as unknown as new () => Error)()
+    );
+
+    const arn = await ssmModule.getSageMakerRoleArn('missing', 'us-east-1');
+    expect(arn).toBeNull();
+  });
+
+  it('propagates other errors', async () => {
+    const error = new Error('Access denied');
+    error.name = 'AccessDeniedException';
+    mockSSMClientSend.mockRejectedValueOnce(error);
+
+    await expect(ssmModule.getSageMakerRoleArn('agent', 'us-east-1')).rejects.toThrow(
+      'Access denied'
+    );
+  });
+});
+
+describe('pushWorkstationTypeToSSM', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockSSMClientSend.mockResolvedValue({});
+  });
+
+  it('pushes JSON-stringified workstation type to correct path', async () => {
+    const wsType = {
+      name: 'gpu-large',
+      capabilities: ['gpu', 'docker'],
+      tools: { claudeCode: true, playwright: false },
+    };
+
+    await ssmModule.pushWorkstationTypeToSSM('my-agent', 'us-east-1', wsType);
+
+    const putCall = mockSSMClientSend.mock.calls[0][0] as {
+      input: { Name: string; Value: string };
+    };
+    expect(putCall.input.Name).toBe('/clawdult/my-agent/workstation-type');
+    expect(JSON.parse(putCall.input.Value)).toEqual(wsType);
+  });
+
+  it('uses Type String', async () => {
+    await ssmModule.pushWorkstationTypeToSSM('agent', 'us-east-1', {
+      name: 'basic',
+      capabilities: [],
+      tools: {},
+    });
+
+    const putCall = mockSSMClientSend.mock.calls[0][0] as {
+      input: { Type: string };
+    };
+    expect(putCall.input.Type).toBe('String');
+  });
+});

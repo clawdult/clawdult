@@ -91,17 +91,19 @@ export const listCommand = new Command('list')
       chalk.dim('  ') +
         chalk.dim('NAME'.padEnd(20)) +
         chalk.dim('STATUS'.padEnd(16)) +
-        chalk.dim('TYPE'.padEnd(12)) +
+        chalk.dim('WS TYPE'.padEnd(18)) +
+        chalk.dim('INSTANCE'.padEnd(12)) +
         chalk.dim('REGION'.padEnd(14)) +
         chalk.dim('UPTIME')
     );
-    console.log(chalk.dim('  ' + '─'.repeat(72)));
+    console.log(chalk.dim('  ' + '─'.repeat(90)));
 
     for (const instance of allInstances) {
       console.log(
         '  ' +
           instance.name.padEnd(20) +
           formatState(instance.state).padEnd(16 + 10) + // +10 for ANSI codes
+          (instance.workstationTypeName || '-').padEnd(18) +
           instance.instanceType.padEnd(12) +
           instance.region.padEnd(14) +
           formatDuration(instance.launchTime)

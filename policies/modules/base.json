@@ -1,6 +1,5 @@
 {
-  "Version": "2012-10-17",
-  "Statement": [
+  "statements": [
     {
       "Sid": "SSMParameterAccess",
       "Effect": "Allow",

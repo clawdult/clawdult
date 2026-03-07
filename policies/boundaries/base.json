@@ -53,11 +53,16 @@
         "iam:PutRolePolicy",
         "iam:PutGroupPolicy",
         "iam:UpdateAssumeRolePolicy",
-        "iam:PassRole",
         "iam:DeleteRolePermissionsBoundary",
         "iam:DeleteUserPermissionsBoundary",
         "iam:SetDefaultPolicyVersion"
       ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyAllPassRole",
+      "Effect": "Deny",
+      "Action": "iam:PassRole",
       "Resource": "*"
     },
     {

@@ -150,6 +150,9 @@ main() {
         log "No Tailscale auth key found, skipping"
     fi
 
+    # Populate agent.env with runtime secrets for interactive sessions
+    populate_agent_env
+
     # Configure GitHub CLI if credentials present
     if [[ -x "${CLAWDULT_BASE}/bin/bootstrap-github" ]]; then
         log "Running GitHub bootstrap..."
@@ -159,6 +162,9 @@ main() {
     # Generate OpenClaw config from SSM config + secrets
     log "Generating OpenClaw configuration..."
     generate_openclaw_config
+
+    # Apply agent instructions (repos, CLAUDE.md, cron) if present
+    apply_agent_instructions
 
     # Configure OpenClaw with Claude subscription if setup token present
     if [[ -f "${SECRETS_DIR}/claude-setup-token" ]]; then
@@ -227,6 +233,28 @@ main() {
     fi
 }
 
+populate_agent_env() {
+    local env_file="${CLAWDULT_BASE}/config/agent.env"
+
+    # Append API keys from fetched secrets
+    [[ -f "${SECRETS_DIR}/anthropic-api-key" ]] && \
+        echo "ANTHROPIC_API_KEY=$(cat "${SECRETS_DIR}/anthropic-api-key")" >> "$env_file"
+    [[ -f "${SECRETS_DIR}/openai-api-key" ]] && \
+        echo "OPENAI_API_KEY=$(cat "${SECRETS_DIR}/openai-api-key")" >> "$env_file"
+    [[ -f "${SECRETS_DIR}/xai-api-key" ]] && \
+        echo "XAI_API_KEY=$(cat "${SECRETS_DIR}/xai-api-key")" >> "$env_file"
+    [[ -f "${SECRETS_DIR}/google-api-key" ]] && \
+        echo "GOOGLE_API_KEY=$(cat "${SECRETS_DIR}/google-api-key")" >> "$env_file"
+
+    # OpenClaw config discovery
+    echo "OPENCLAW_CONFIG_PATH=${OPENCLAW_DIR}/openclaw.json" >> "$env_file"
+    echo "OPENCLAW_HOME=${OPENCLAW_DIR}" >> "$env_file"
+
+    chmod 600 "$env_file"
+    chown ubuntu:ubuntu "$env_file"
+    log "agent.env populated with runtime secrets"
+}
+
 configure_gateway() {
     local mode="$1"
     local port="${OPENCLAW_PORT:-18789}"
@@ -267,6 +295,109 @@ configure_gateway() {
             --overwrite \
             --region "$REGION" || log "WARNING: Failed to store gateway URL in SSM"
     fi
+}
+
+apply_agent_instructions() {
+    local instructions_param="/clawdult/${AGENT_NAME}/agent-instructions"
+    local instructions_file="${SECRETS_DIR}/agent-instructions.json"
+
+    if ! fetch_ssm_secret "$instructions_param" "$instructions_file"; then
+        log "No agent instructions found, skipping"
+        return 0
+    fi
+
+    log "Applying agent instructions..."
+
+    # Write purpose to agent.yaml
+    local purpose
+    purpose=$(jq -r '.purpose // ""' "$instructions_file")
+    if [[ -n "$purpose" ]]; then
+        local yaml_file="${CLAWDULT_BASE}/config/agent.yaml"
+        # Append purpose under agent section
+        echo "" >> "$yaml_file"
+        echo "# Agent purpose (from spec)" >> "$yaml_file"
+        echo "purpose: \"${purpose}\"" >> "$yaml_file"
+        log "Purpose written to agent.yaml"
+    fi
+
+    # Write instructions to workspace CLAUDE.md
+    local instructions
+    instructions=$(jq -r '.instructions // ""' "$instructions_file")
+    if [[ -n "$instructions" ]]; then
+        echo "$instructions" > "${CLAWDULT_BASE}/workspace/CLAUDE.md"
+        chown ubuntu:ubuntu "${CLAWDULT_BASE}/workspace/CLAUDE.md"
+        chmod 644 "${CLAWDULT_BASE}/workspace/CLAUDE.md"
+        log "Instructions written to workspace/CLAUDE.md"
+    fi
+
+    # Clone repos
+    local repo_count
+    repo_count=$(jq -r '.repos | length' "$instructions_file")
+    if [[ "$repo_count" -gt 0 ]]; then
+        local github_token=""
+        [[ -f "${SECRETS_DIR}/github-token" ]] && github_token=$(cat "${SECRETS_DIR}/github-token")
+
+        for i in $(seq 0 $(( repo_count - 1 ))); do
+            local url branch clone_path repo_name
+            url=$(jq -r ".repos[$i].url" "$instructions_file")
+            branch=$(jq -r ".repos[$i].branch // \"\"" "$instructions_file")
+            clone_path=$(jq -r ".repos[$i].path // \"\"" "$instructions_file")
+
+            # Derive repo name from URL
+            repo_name=$(basename "$url" .git)
+            [[ -z "$clone_path" ]] && clone_path="$repo_name"
+
+            local target_dir="${CLAWDULT_BASE}/workspace/projects/${clone_path}"
+
+            # Build clone URL with token if available
+            local clone_url="$url"
+            if [[ -n "$github_token" ]]; then
+                # Handle both full URLs and owner/repo shorthand
+                if [[ "$url" =~ ^https:// ]]; then
+                    clone_url=$(echo "$url" | sed "s|https://|https://${github_token}@|")
+                else
+                    clone_url="https://${github_token}@github.com/${url}.git"
+                fi
+            elif [[ ! "$url" =~ ^https:// ]]; then
+                clone_url="https://github.com/${url}.git"
+            fi
+
+            local clone_args=("clone")
+            [[ -n "$branch" ]] && clone_args+=("--branch" "$branch")
+            clone_args+=("$clone_url" "$target_dir")
+
+            log "Cloning repo: $url -> $clone_path"
+            if sudo -u ubuntu git "${clone_args[@]}" 2>&1 | tee -a "$LOG_FILE"; then
+                log "  -> Cloned successfully"
+            else
+                log "WARNING: Failed to clone $url"
+            fi
+        done
+    fi
+
+    # Install cron jobs
+    local cron_count
+    cron_count=$(jq -r '.cron | length' "$instructions_file")
+    if [[ "$cron_count" -gt 0 ]]; then
+        local crontab_file="/tmp/clawdult-crontab"
+        # Preserve existing crontab
+        sudo -u ubuntu crontab -l > "$crontab_file" 2>/dev/null || true
+
+        for i in $(seq 0 $(( cron_count - 1 ))); do
+            local schedule command
+            schedule=$(jq -r ".cron[$i].schedule" "$instructions_file")
+            command=$(jq -r ".cron[$i].command" "$instructions_file")
+            echo "$schedule $command" >> "$crontab_file"
+            log "Added cron job: $schedule $command"
+        done
+
+        sudo -u ubuntu crontab "$crontab_file"
+        rm -f "$crontab_file"
+        log "Cron jobs installed"
+    fi
+
+    rm -f "$instructions_file"
+    log "Agent instructions applied"
 }
 
 generate_openclaw_config() {

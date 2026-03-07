@@ -10,14 +10,20 @@ import {
   getConfiguredDescription as getConnectivityDescription,
   validateConnectivity,
 } from '../../../services/connectivity-profiles.js';
-import type { GitHubAgentAccount } from '../../../schemas/config.js';
+import type {
+  AgentInstructions,
+  GitHubAgentAccount,
+  WorkstationType,
+} from '../../../schemas/config.js';
 import { GO_BACK } from '../../utils/wizard.js';
 import { requireAwsCredentials } from '../../utils/require-aws.js';
 import {
+  handleWorkstationType,
   handleKeyProfile,
   handleConnectivityProfile,
   handleGitHubAgent,
   handleInfrastructure,
+  handleInstructions,
   type InfrastructureResult,
 } from './wizard-steps.js';
 import { provisionWorkstation } from './provisioner.js';
@@ -94,9 +100,72 @@ export const createCommand = new Command('create')
   .option('--key-profile <name>', 'Use a specific key profile')
   .option('--skip-connectivity', 'Skip connectivity profile step')
   .option('--connectivity-profile <name>', 'Use a specific connectivity profile')
+  .option('--workstation-type <type>', 'Workstation type (e.g., general-purpose, data-science)')
+  .option('--spec <name>', 'Provision from a saved agent spec')
+  .option('--spec-file <path>', 'Provision from a YAML spec file')
   .option('--dry-run', 'Show what would be created without actually creating')
   .option('--no-ssh', 'Skip auto-SSH into workstation after creation')
   .action(async (providedName: string | undefined, options) => {
+    // Handle --spec or --spec-file: skip wizard entirely
+    if (options.spec || options.specFile) {
+      const { resolveAgentSpec } = await import('../../../services/agent-spec-resolver.js');
+
+      let spec;
+      if (options.specFile) {
+        const { loadAgentSpecFile } = await import('../../../services/agent-specs.js');
+        spec = await loadAgentSpecFile(options.specFile);
+      } else {
+        const { getAgentSpec } = await import('../../../services/agent-specs.js');
+        spec = await getAgentSpec(options.spec);
+        if (!spec) {
+          console.error(chalk.red(`Spec '${options.spec}' not found.`));
+          const { listAgentSpecs } = await import('../../../services/agent-specs.js');
+          const available = await listAgentSpecs();
+          if (available.length > 0) {
+            console.log(chalk.dim(`Available specs: ${available.map((s) => s.name).join(', ')}`));
+          }
+          process.exit(1);
+        }
+      }
+
+      // Allow name override from CLI argument
+      const specName = providedName ?? spec.name;
+
+      await requireAwsCredentials();
+      const globalConfig = await loadGlobalConfig();
+      const resolved = await resolveAgentSpec(spec, globalConfig);
+
+      console.log(chalk.bold(`\nProvisioning from spec: ${spec.name}\n`));
+      console.log(chalk.dim(`  Name:          ${specName}`));
+      console.log(chalk.dim(`  Type:          ${resolved.workstationType.name}`));
+      console.log(chalk.dim(`  Instance:      ${resolved.infrastructure.instanceType}`));
+      console.log(chalk.dim(`  Region:        ${resolved.infrastructure.region}`));
+      console.log(chalk.dim(`  Key Profile:   ${resolved.keyProfile?.name ?? 'None'}`));
+      console.log(chalk.dim(`  GitHub:        ${resolved.github?.username ?? 'None'}`));
+      console.log(chalk.dim(`  Connectivity:  ${resolved.connectivity?.name ?? 'None'}`));
+      console.log(chalk.dim(`  Instructions:  ${resolved.instructions?.purpose ?? 'None'}\n`));
+
+      if (options.dryRun) {
+        console.log(chalk.yellow('Dry run mode - no resources will be created.\n'));
+        console.log(chalk.green('✓ Spec is valid'));
+        return;
+      }
+
+      const enableAutoSSH = options.ssh ?? true;
+      await provisionWorkstation({
+        name: specName,
+        workstationType: resolved.workstationType,
+        infrastructure: resolved.infrastructure,
+        keyProfile: resolved.keyProfile,
+        github: resolved.github,
+        connectivity: resolved.connectivity,
+        instructions: resolved.instructions,
+        globalConfig,
+        enableAutoSSH,
+      });
+      return;
+    }
+
     const name = providedName ?? generateRandomName();
     console.log(chalk.bold('\n┌──────────────────────────────────────────────────────────────┐'));
     console.log(chalk.bold('│              CLAWDULT WORKSTATION PROVISIONER                │'));
@@ -120,18 +189,28 @@ export const createCommand = new Command('create')
     }
 
     // Build step list based on what's not skipped
-    type StepName = 'keyProfile' | 'github' | 'connectivity' | 'infrastructure';
+    type StepName =
+      | 'workstationType'
+      | 'keyProfile'
+      | 'github'
+      | 'connectivity'
+      | 'instructions'
+      | 'infrastructure';
     const steps: StepName[] = [];
+    steps.push('workstationType');
     if (!options.skipKeys) steps.push('keyProfile');
     if (!options.skipGithub) steps.push('github');
     if (!options.skipConnectivity) steps.push('connectivity');
+    steps.push('instructions');
     steps.push('infrastructure');
 
     // Accumulated state from each step (object so TypeScript doesn't narrow through closures)
     const wizardState = {
+      workstationType: null as WorkstationType | null,
       keyProfile: null as KeyProfile | null,
       github: null as GitHubAgentAccount | null,
       connectivity: null as ConnectivityProfile | null,
+      instructions: null as AgentInstructions | null,
       infrastructure: null as InfrastructureResult | null,
     };
 
@@ -142,6 +221,13 @@ export const createCommand = new Command('create')
       const allowBack = idx > 0;
 
       switch (stepName) {
+        case 'workstationType': {
+          console.log(chalk.bold(`STEP ${displayNum}: Workstation Type\n`));
+          const result = await handleWorkstationType(options.workstationType, allowBack);
+          if (result === GO_BACK) return false;
+          wizardState.workstationType = result;
+          return true;
+        }
         case 'keyProfile': {
           console.log(chalk.bold(`STEP ${displayNum}: API Key Profile\n`));
           const result = await handleKeyProfile(options.keyProfile, allowBack);
@@ -161,6 +247,13 @@ export const createCommand = new Command('create')
           const result = await handleConnectivityProfile(options.connectivityProfile, allowBack);
           if (result === GO_BACK) return false;
           wizardState.connectivity = result;
+          return true;
+        }
+        case 'instructions': {
+          console.log(chalk.bold(`STEP ${displayNum}: Agent Instructions\n`));
+          const instrResult = await handleInstructions(allowBack);
+          if (instrResult === GO_BACK) return false;
+          wizardState.instructions = instrResult;
           return true;
         }
         case 'infrastructure': {
@@ -189,6 +282,11 @@ export const createCommand = new Command('create')
     wizardConfirm: while (true) {
       console.log(chalk.dim('\nConfiguration:'));
       console.log(chalk.dim(`  Name:          ${name}`));
+      console.log(
+        chalk.dim(
+          `  Type:          ${wizardState.workstationType!.name} (${wizardState.workstationType!.description})`
+        )
+      );
       console.log(chalk.dim(`  Instance Type: ${wizardState.infrastructure!.instanceType}`));
       console.log(chalk.dim(`  Region:        ${wizardState.infrastructure!.region}`));
       console.log(chalk.dim(`  Volume Size:   ${wizardState.infrastructure!.volumeSize} GB`));
@@ -202,7 +300,12 @@ export const createCommand = new Command('create')
       );
       console.log(
         chalk.dim(
-          `  Connectivity:  ${wizardState.connectivity ? `${wizardState.connectivity.name} (${getConnectivityDescription(wizardState.connectivity)})` : 'None'}\n`
+          `  Connectivity:  ${wizardState.connectivity ? `${wizardState.connectivity.name} (${getConnectivityDescription(wizardState.connectivity)})` : 'None'}`
+        )
+      );
+      console.log(
+        chalk.dim(
+          `  Instructions:  ${wizardState.instructions ? wizardState.instructions.purpose || 'configured' : 'None'}\n`
         )
       );
 
@@ -263,10 +366,12 @@ export const createCommand = new Command('create')
 
     await provisionWorkstation({
       name,
+      workstationType: wizardState.workstationType!,
       infrastructure: wizardState.infrastructure!,
       keyProfile: wizardState.keyProfile,
       github: wizardState.github,
       connectivity: wizardState.connectivity,
+      instructions: wizardState.instructions,
       globalConfig,
       enableAutoSSH,
     });

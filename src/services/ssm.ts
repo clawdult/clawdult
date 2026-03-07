@@ -8,7 +8,9 @@ import {
   ParameterNotFound,
 } from '@aws-sdk/client-ssm';
 import { getSecret } from './secrets.js';
-import type { GitHubAgentAccount } from '../schemas/config.js';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import type { GitHubAgentAccount, AgentInstructions } from '../schemas/config.js';
 import { getAgentToken } from './github-agent.js';
 import { getAWSClientConfig } from './aws-client.js';
 import { retryWithBackoff } from './aws-retry.js';
@@ -527,6 +529,92 @@ export async function getGatewayURL(agentName: string, region: string): Promise<
     }
     throw error;
   }
+}
+
+/**
+ * Store the SageMaker execution role ARN in SSM so the agent can retrieve it.
+ */
+export async function pushSageMakerRoleArnToSSM(
+  agentName: string,
+  region: string,
+  roleArn: string
+): Promise<void> {
+  const client = await createSSMClient(region);
+
+  await putParameter(client, {
+    name: `/clawdult/${agentName}/sagemaker-role-arn`,
+    value: roleArn,
+    type: 'String',
+    agentName,
+  });
+}
+
+/**
+ * Get the SageMaker execution role ARN for an agent from SSM.
+ */
+export async function getSageMakerRoleArn(
+  agentName: string,
+  region: string
+): Promise<string | null> {
+  const client = await createSSMClient(region);
+
+  try {
+    const response = await retryWithBackoff(
+      () =>
+        client.send(
+          new GetParameterCommand({
+            Name: `/clawdult/${agentName}/sagemaker-role-arn`,
+          })
+        ),
+      { transientErrors: SSM_TRANSIENT_ERRORS }
+    );
+    return response.Parameter?.Value ?? null;
+  } catch (error) {
+    if (error instanceof ParameterNotFound) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Store workstation type configuration in SSM so the workstation knows its type and capabilities.
+ */
+export async function pushWorkstationTypeToSSM(
+  agentName: string,
+  region: string,
+  workstationType: { name: string; capabilities: string[]; tools: Record<string, boolean> }
+): Promise<void> {
+  const client = await createSSMClient(region);
+
+  await putParameter(client, {
+    name: `/clawdult/${agentName}/workstation-type`,
+    value: JSON.stringify(workstationType),
+    type: 'String',
+    agentName,
+  });
+}
+
+export async function pushAgentInstructionsToSSM(
+  agentName: string,
+  region: string,
+  instructions: AgentInstructions
+): Promise<void> {
+  const client = await createSSMClient(region);
+
+  // Resolve file: references to inline content
+  const resolved = { ...instructions };
+  if (resolved.instructions?.startsWith('file:')) {
+    const filePath = path.resolve(resolved.instructions.slice(5));
+    resolved.instructions = await fs.readFile(filePath, 'utf-8');
+  }
+
+  await putParameter(client, {
+    name: `/clawdult/${agentName}/agent-instructions`,
+    value: JSON.stringify(resolved),
+    type: 'String',
+    agentName,
+  });
 }
 
 export interface CopySSMResult {

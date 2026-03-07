@@ -4,7 +4,12 @@ import ora from 'ora';
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { WorkstationConfigSchema } from '../../../schemas/config.js';
-import type { GlobalConfig, GitHubAgentAccount } from '../../../schemas/config.js';
+import type {
+  AgentInstructions,
+  GlobalConfig,
+  GitHubAgentAccount,
+  WorkstationType,
+} from '../../../schemas/config.js';
 import type { KeyProfile } from '../../../services/key-profiles.js';
 import type { ConnectivityProfile } from '../../../services/connectivity-profiles.js';
 import type { InfrastructureResult } from './wizard-steps.js';
@@ -12,6 +17,9 @@ import {
   pushKeyProfileToSSM,
   pushGitHubCredentialsToSSM,
   pushConnectivityProfileToSSM,
+  pushSageMakerRoleArnToSSM,
+  pushWorkstationTypeToSSM,
+  pushAgentInstructionsToSSM,
   getTailscaleIP,
 } from '../../../services/ssm.js';
 import {
@@ -81,25 +89,29 @@ function showManualConnectionInstructions(
   console.log(chalk.dim(`     clawdult ssh ${workstationName}`));
   console.log(chalk.dim(`     (or: ssh -i ${sshKeyPath} ubuntu@${ip})\n`));
 
-  console.log(chalk.white('  2. Run the onboarding flow:'));
-  console.log(chalk.dim('     openclaw onboard\n'));
+  console.log(chalk.white('  2. Verify the agent is configured:'));
+  console.log(chalk.dim('     openclaw doctor\n'));
 }
 
 export async function provisionWorkstation(params: {
   name: string;
+  workstationType: WorkstationType;
   infrastructure: InfrastructureResult;
   keyProfile: KeyProfile | null;
   github: GitHubAgentAccount | null;
   connectivity: ConnectivityProfile | null;
+  instructions: AgentInstructions | null;
   globalConfig: GlobalConfig;
   enableAutoSSH: boolean;
 }): Promise<void> {
   const {
     name,
+    workstationType,
     infrastructure,
     keyProfile: selectedKeyProfile,
     github: selectedGitHubAgent,
     connectivity: selectedConnectivityProfile,
+    instructions,
     globalConfig,
     enableAutoSSH,
   } = params;
@@ -269,13 +281,36 @@ export async function provisionWorkstation(params: {
 
     // Create IAM role and instance profile AFTER SSH key selection
     // Now all interactive prompts are done - safe to create IAM resources
+    const capabilities = workstationType.capabilities;
     const iamSpinner = ora('Creating IAM role and instance profile...').start();
     let instanceProfileName: string;
     try {
-      const iamResources = await ensureIamResources(config.name, config.region);
+      const iamResources = await ensureIamResources(config.name, config.region, capabilities);
       instanceProfileName = iamResources.instanceProfileName;
       resources.iamResourcesName = config.name;
-      iamSpinner.succeed('IAM role and instance profile ready');
+
+      const extraRoleNames = iamResources.extraRoles.map((r) => r.type);
+      if (extraRoleNames.length > 0) {
+        iamSpinner.succeed(
+          `IAM role, instance profile, and ${extraRoleNames.join(', ')} role(s) ready`
+        );
+      } else {
+        iamSpinner.succeed('IAM role and instance profile ready');
+      }
+
+      // Store extra role ARNs in SSM so the agent can discover them
+      for (const extra of iamResources.extraRoles) {
+        if (extra.type === 'sagemaker') {
+          await pushSageMakerRoleArnToSSM(config.name, config.region, extra.roleArn);
+        }
+      }
+
+      // Store workstation type in SSM
+      await pushWorkstationTypeToSSM(config.name, config.region, {
+        name: workstationType.name,
+        capabilities: workstationType.capabilities,
+        tools: workstationType.tools,
+      });
     } catch (error) {
       iamSpinner.fail('Failed to create IAM resources');
       throw new Error(error instanceof Error ? error.message : String(error));
@@ -361,6 +396,22 @@ export async function provisionWorkstation(params: {
       }
     }
 
+    if (instructions) {
+      const instrSpinner = ora('Pushing agent instructions to SSM...').start();
+      try {
+        await pushAgentInstructionsToSSM(config.name, config.region, instructions);
+        instrSpinner.succeed(
+          `Pushed agent instructions${instructions.purpose ? `: ${instructions.purpose}` : ''}`
+        );
+      } catch (error) {
+        instrSpinner.fail('Failed to push agent instructions to SSM');
+        console.error(
+          chalk.red(`  Error: ${error instanceof Error ? error.message : String(error)}`)
+        );
+        throw new Error('Failed to push agent instructions to SSM');
+      }
+    }
+
     const spinner = ora('Launching EC2 instance...').start();
 
     // Launch the EC2 instance with metadata tags
@@ -374,6 +425,8 @@ export async function provisionWorkstation(params: {
       iamInstanceProfile: instanceProfileName,
       keyProfileName: selectedKeyProfile?.name,
       githubAgentUsername: selectedGitHubAgent?.username,
+      workstationTypeName: workstationType.name,
+      capabilities: workstationType.capabilities,
     });
 
     resources.instanceId = launchResult.instanceId;
@@ -526,10 +579,9 @@ export async function provisionWorkstation(params: {
 
       if (connectIp) {
         const methodLabel = connectionMethod === 'tailscale' ? 'Tailscale' : 'public IP';
-        console.log(chalk.cyan(`Connecting via ${methodLabel} to run openclaw onboard...\n`));
+        console.log(chalk.cyan(`Connecting via ${methodLabel} to verify workstation...\n`));
 
         const sshArgs: string[] = [
-          '-t', // Force TTY allocation for interactive prompts
           '-i',
           sshKeyPath,
           '-p',
@@ -539,7 +591,7 @@ export async function provisionWorkstation(params: {
           '-o',
           'ConnectTimeout=30',
           `ubuntu@${connectIp}`,
-          'openclaw onboard',
+          'openclaw doctor || openclaw --version',
         ];
 
         try {
@@ -547,7 +599,6 @@ export async function provisionWorkstation(params: {
             const ssh = spawn('ssh', sshArgs, { stdio: 'inherit' });
             ssh.on('error', reject);
             ssh.on('exit', (code, signal) => {
-              // Signal termination (e.g., Ctrl+C) should exit cleanly
               if (signal) {
                 process.exit(128 + (signal === 'SIGINT' ? 2 : 1));
               }
@@ -556,10 +607,10 @@ export async function provisionWorkstation(params: {
           });
 
           if (exitCode === 0) {
-            return; // Success - we're done
+            console.log(chalk.green('\n✓ Workstation verified and ready.\n'));
+            return;
           }
-          // Non-zero exit - fall through to show manual instructions
-          console.log(chalk.yellow(`\nSSH command exited with code ${exitCode}\n`));
+          console.log(chalk.yellow(`\nVerification exited with code ${exitCode} (non-fatal)\n`));
         } catch (error) {
           console.log(
             chalk.yellow(
@@ -568,7 +619,6 @@ export async function provisionWorkstation(params: {
           );
         }
 
-        // Show manual connection instructions
         showManualConnectionInstructions(config.name, connectIp, connectionMethod, sshKeyPath);
       } else {
         console.log(chalk.yellow('No reachable IP found for auto-SSH.\n'));
@@ -577,7 +627,7 @@ export async function provisionWorkstation(params: {
           chalk.dim('  Use: ') +
             chalk.white(`clawdult ssh ${config.name}`) +
             chalk.dim(' then run ') +
-            chalk.white('openclaw onboard\n')
+            chalk.white('openclaw doctor\n')
         );
       }
     } else {
@@ -585,8 +635,8 @@ export async function provisionWorkstation(params: {
       console.log(chalk.cyan('To complete setup:\n'));
       console.log(chalk.white('  1. Connect to your workstation:'));
       console.log(chalk.dim(`     clawdult ssh ${config.name}\n`));
-      console.log(chalk.white('  2. Run the onboarding flow:'));
-      console.log(chalk.dim('     openclaw onboard\n'));
+      console.log(chalk.white('  2. Verify the agent is configured:'));
+      console.log(chalk.dim('     openclaw doctor\n'));
     }
   } catch (error) {
     console.error(chalk.red(error instanceof Error ? error.message : String(error)));

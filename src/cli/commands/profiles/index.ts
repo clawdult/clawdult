@@ -13,6 +13,7 @@ import {
 import { keysCommand } from './keys.js';
 import { budgetCommand } from './budget.js';
 import { connectivityCommand } from './connectivity.js';
+import { typesCommand } from './types.js';
 import { permissionsCommand } from './permissions.js';
 
 export const profilesCommand = new Command('profiles')
@@ -20,6 +21,7 @@ export const profilesCommand = new Command('profiles')
   .addCommand(keysCommand)
   .addCommand(budgetCommand)
   .addCommand(connectivityCommand)
+  .addCommand(typesCommand)
   .addCommand(permissionsCommand)
   .action(async () => {
     console.log(chalk.bold('\nProfile Overview\n'));
@@ -85,6 +87,7 @@ export const profilesCommand = new Command('profiles')
     console.log(chalk.dim('  clawdult profiles keys [list|create|edit|delete]'));
     console.log(chalk.dim('  clawdult profiles budget [list|create|edit|delete|apply|status]'));
     console.log(chalk.dim('  clawdult profiles connectivity [list|create|edit|delete]'));
+    console.log(chalk.dim('  clawdult profiles types [list|show|create|delete]'));
     console.log(chalk.dim('  clawdult profiles permissions [list|create|show|edit|delete]'));
     console.log();
   });

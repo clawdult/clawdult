@@ -81,6 +81,82 @@ export const ToolsConfigSchema = z.object({
 
 export type ToolsConfig = z.infer<typeof ToolsConfigSchema>;
 
+export const CapabilityModuleSchema = z.enum(['sagemaker']);
+
+export type CapabilityModule = z.infer<typeof CapabilityModuleSchema>;
+
+export const WorkstationTypeSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  capabilities: z.array(CapabilityModuleSchema).default([]),
+  tools: ToolsConfigSchema.default({}),
+});
+
+export type WorkstationType = z.infer<typeof WorkstationTypeSchema>;
+
+export const RepoSchema = z.object({
+  url: z.string(),
+  branch: z.string().optional(),
+  path: z.string().optional(),
+});
+
+export type Repo = z.infer<typeof RepoSchema>;
+
+export const AgentInstructionsSchema = z.object({
+  purpose: z.string().optional(),
+  instructions: z.string().optional(),
+  repos: z.array(RepoSchema).default([]),
+  cron: z
+    .array(
+      z.object({
+        schedule: z.string(),
+        command: z.string(),
+      })
+    )
+    .default([]),
+});
+
+export type AgentInstructions = z.infer<typeof AgentInstructionsSchema>;
+
+export const AgentSpecSchema = z.object({
+  name: z.string().regex(/^[a-z][a-z0-9-]*[a-z0-9]$/),
+  workstationType: z.string(),
+  keyProfile: z.string().optional(),
+  connectivityProfile: z.string().optional(),
+  budgetProfile: z.string().optional(),
+  github: z.string().optional(),
+  instanceType: InstanceTypeSchema.optional(),
+  region: RegionSchema.optional(),
+  volumeSize: z.number().int().min(20).max(500).optional(),
+  instructions: AgentInstructionsSchema.optional(),
+  tags: z.record(z.string()).optional(),
+});
+
+export type AgentSpec = z.infer<typeof AgentSpecSchema>;
+
+export const SageMakerInstanceTypeSchema = z.enum([
+  'ml.g4dn.xlarge',
+  'ml.g4dn.2xlarge',
+  'ml.g4dn.4xlarge',
+  'ml.g5.xlarge',
+  'ml.g5.2xlarge',
+  'ml.g5.4xlarge',
+  'ml.p3.2xlarge',
+  'ml.p3.8xlarge',
+]);
+
+export type SageMakerInstanceType = z.infer<typeof SageMakerInstanceTypeSchema>;
+
+export const TrainingJobConfigSchema = z.object({
+  instanceType: SageMakerInstanceTypeSchema.default('ml.g4dn.xlarge'),
+  useSpotInstances: z.boolean().default(true),
+  maxSpotWaitSeconds: z.number().int().min(60).max(86400).default(3600),
+  maxRuntimeSeconds: z.number().int().min(60).max(432000).default(86400),
+  volumeSizeGB: z.number().int().min(10).max(500).default(50),
+});
+
+export type TrainingJobConfig = z.infer<typeof TrainingJobConfigSchema>;
+
 export const IamStatementSchema = z.object({
   Sid: z.string().optional(),
   Effect: z.enum(['Allow', 'Deny']),
